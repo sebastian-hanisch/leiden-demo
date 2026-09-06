@@ -164,12 +164,16 @@ if "ld_step" not in st.session_state or st.session_state.get("ld_step_owner") !=
 
 st.markdown("## 🎯 Leiden-Algorithmus in Aktion")
 
-step = st.slider(
-    "Pass (Level)", 0, max_step, key="ld_step",
-    help="Ein Pass = lokales Verschieben + Verfeinerung + Aggregation. Reglerposition "
-    "steht standardmäßig auf dem letzten (konvergierten) Pass - frei verschiebbar, um "
-    "den Fortschritt Level für Level zu erkunden.",
-)
+if max_step == 0:
+    step = 0
+    st.caption("Bereits nach dem ersten Pass konvergiert - kein Regler nötig.")
+else:
+    step = st.slider(
+        "Pass (Level)", 0, max_step, key="ld_step",
+        help="Ein Pass = lokales Verschieben + Verfeinerung + Aggregation. Reglerposition "
+        "steht standardmäßig auf dem letzten (konvergierten) Pass - frei verschiebbar, um "
+        "den Fortschritt Level für Level zu erkunden.",
+    )
 current_pass = result.passes[step]
 base_adjacency = build_similarity_graph(instance.as_array(), int(n_neighbors))
 
