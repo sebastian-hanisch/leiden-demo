@@ -1,5 +1,7 @@
 # Leiden-Algorithmus für automatische Depot-Gruppierung – Streamlit-Demo
 
+**[→ Demo live ausprobieren](https://sebastianhanisch-leiden-demo.streamlit.app/)**
+
 Zehntes Stück der "Konzepte"-Reihe für die Website "Sebastian Hanisch – Operations
 Research und Machine Learning", **Fortsetzung von [spectral-demo](../spectral-demo)**
 (wie dpmm-demo gmm-demo fortsetzte, nicht wie divisive-demo ein Kontrast):
