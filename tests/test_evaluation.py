@@ -18,6 +18,15 @@ def test_rand_index_penalizes_disagreement():
     assert rand_index([0, 0, 1, 1], [0, 1, 0, 1]) < 0.6
 
 
+def test_rand_index_excludes_true_label_minus_one():
+    """Bruecken-/Ausreisserpunkte (true_label -1, siehe ld_scenario.py::_add_bridge)
+    haben keine echte Gruppenzugehoerigkeit und muessen ausgeschlossen werden - wie in
+    hdbscan-demo."""
+    with_bridge = rand_index([0, 0, 1, 1, -1], [0, 0, 1, 1, 2])
+    without_bridge = rand_index([0, 0, 1, 1], [0, 0, 1, 1])
+    assert with_bridge == without_bridge == pytest.approx(1.0)
+
+
 def test_kmeans_baseline_returns_k_distinct_labels():
     instance = generate_instance(n_points=60, k=3, spread=0.15, shape="blobs", seed=1)
     labels = kmeans_baseline_labels(instance.as_array(), k=3, seed=1)
@@ -76,7 +85,10 @@ def test_kmeans_across_k_shows_sensitivity_to_wrong_k():
 
 def _run_preset_as_app_would(preset_name):
     p = C.PRESETS[preset_name]
-    instance = generate_instance(p["n_points"], p["k"], p["spread"], p["shape"], p["seed"])
+    instance = generate_instance(
+        p["n_points"], p["k"], p["spread"], p["shape"], p["seed"],
+        density_imbalance=p["density_imbalance"], bridge_strength=p["bridge_strength"],
+    )
     result = run(instance.as_array(), p["n_neighbors"], p["resolution"], p["seed"])
     ri = rand_index(instance.true_labels, result.final_labels)
     return instance, p, result, ri
@@ -106,3 +118,15 @@ def test_resolution_compromise_preset_matches_actual_app_behavior():
     assert high_p["resolution"] > low_p["resolution"]
     assert high_result.n_communities > low_result.n_communities
     assert high_result.n_communities < instance.k
+
+
+def test_combined_hardcase_preset_survives_density_imbalance_and_bridge_much_better_than_naive_methods():
+    """Kern-Nachweis: anders als DBSCAN (Dichte-Ungleichgewicht) und Single-Linkage
+    (Bruecken-Chaining) verschmilzt Leiden bei diesem Haertefall KEINE zwei echten
+    Gruppen faelschlich - der Rand-Index bleibt hoch. Es ist aber nicht perfekt immun:
+    die Bruecke selbst kann eine eigene kleine Community bilden, daher found_k typischer-
+    weise etwas UEBER dem wahren k statt exakt gleich (siehe PRESET_HELP in app.py)."""
+    instance, p, result, ri = _run_preset_as_app_would("Kombinierter Härtefall (Dichte + Brücke)")
+    assert p["density_imbalance"] > 0 and p["bridge_strength"] > 0
+    assert ri > 0.95
+    assert result.n_communities >= instance.k

@@ -8,9 +8,13 @@ import numpy as np
 
 def rand_index(true_labels, pred_labels):
     """Anteil der Punktpaare, bei denen beide Partitionen uebereinstimmen (entweder
-    beide im selben Cluster oder beide in unterschiedlichen)."""
+    beide im selben Cluster oder beide in unterschiedlichen). Punkte mit true_label -1
+    (Bruecken-/Ausreisserpunkte ohne echte Gruppenzugehoerigkeit, siehe
+    ld_scenario.py::_add_bridge) werden ausgeschlossen, wie in hdbscan-demo."""
     true_arr = np.asarray(true_labels)
     pred_arr = np.asarray(pred_labels)
+    mask = true_arr != -1
+    true_arr, pred_arr = true_arr[mask], pred_arr[mask]
     n = len(true_arr)
     if n < 2:
         return 1.0

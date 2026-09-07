@@ -40,8 +40,10 @@ st.set_page_config(page_title="Leiden-Algorithmus – Sebastian Hanisch", layout
 
 
 @st.cache_data(show_spinner=False)
-def _compute_run(n_points, k, spread, shape, n_neighbors, resolution, seed):
-    instance = generate_instance(n_points, k, spread, shape, seed)
+def _compute_run(n_points, k, spread, density_imbalance, bridge_strength, shape, n_neighbors, resolution, seed):
+    instance = generate_instance(
+        n_points, k, spread, shape, seed, density_imbalance=density_imbalance, bridge_strength=bridge_strength
+    )
     result = run(instance.as_array(), n_neighbors, resolution, seed)
     return instance, result
 
@@ -104,6 +106,7 @@ PRESET_HELP = {
     "Kein k nötig - viele Gruppen": "Deutlich höhere wahre Gruppenzahl, weiterhin klar getrennt - 'kein k nötig' bleibt robust.",
     "Auflösungsgrenze": "Viele kleine, eng gepackte Gruppen - Standard-Modularität (γ=1) verschmilzt einige davon trotz klarer Trennung.",
     "Auflösungsparameter als Kompromiss": "Dieselbe Szenerie mit höherem γ - hilft, behebt das Auflösungslimit aber nicht vollständig.",
+    "Kombinierter Härtefall (Dichte + Brücke)": "Dieselben zwei Härtefälle, an denen DBSCAN bzw. Single-Linkage-Chaining scheitern - Leiden übersteht beide deutlich besser (Rand-Index meist >0.95), ist aber nicht perfekt immun: die Brückenpunkte selbst bilden gelegentlich eine eigene kleine Community, statt zwei echte Gruppen fälschlich zu verschmelzen.",
 }
 preset_cols = st.columns(len(C.PRESETS))
 for i, name in enumerate(C.PRESETS.keys()):
@@ -126,13 +129,31 @@ with st.sidebar:
         "Streuung", *bounds("spread_slider"), key="spread_slider", step=0.01,
         help="Klein = Gruppen klar getrennt. Groß = Gruppen überlappen sich spürbar.",
     )
+    density_imbalance = st.slider(
+        "Dichte-Ungleichgewicht", *bounds("density_imbalance_slider"), key="density_imbalance_slider",
+        step=0.05,
+        help="0 = alle Gruppen gleich dicht. 1 = eine Gruppe wird deutlich lockerer/diffuser "
+        "als die übrigen, bei gleicher Punktzahl - derselbe Härtefall wie in dbscan-demo/"
+        "hdbscan-demo.",
+    )
+    bridge_strength = st.slider(
+        "Brücken-Stärke (zwischen den ersten beiden Gruppen)", *bounds("bridge_strength_slider"),
+        key="bridge_strength_slider", step=0.02,
+        help="0 = keine Brücke. Höher = mehr verbindende Punkte zwischen Gruppe 1 und 2 - "
+        "derselbe Härtefall wie in agglomerative-demo/hdbscan-demo (dort Single-Linkage-"
+        "Chaining).",
+    )
+    seed = st.number_input("Zufalls-Seed", *bounds("seed_input"), key="seed_input", step=1)
+
+    st.markdown("**Punktwolken-Form**")
     shape = st.radio(
         "Form", options=C.SHAPES, key="shape_radio", format_func=lambda s: C.SHAPE_LABELS[s],
+        help="„Gruppen“: runde, konvexe Cluster. „Halbmonde“: nicht-konvexe Bögen - Dichte-"
+        "Ungleichgewicht und Brücken-Stärke wirken auf beide Formen.",
     )
     n_neighbors = st.slider(
         "Nachbarn je Punkt (Graph-Konstruktion)", *bounds("n_neighbors_slider"), key="n_neighbors_slider",
     )
-    seed = st.number_input("Zufalls-Seed", *bounds("seed_input"), key="seed_input", step=1)
 
     st.markdown("**Leiden-Parameter**")
     resolution = st.slider(
@@ -149,15 +170,16 @@ with st.sidebar:
         help="Würfelt einen neuen Zufalls-Seed für die Standorte.",
     )
 
-sync_query_params(n_points, k, spread, seed, shape, n_neighbors, resolution)
+sync_query_params(n_points, k, spread, density_imbalance, bridge_strength, seed, shape, n_neighbors, resolution)
 
 with st.spinner("Führe den Leiden-Algorithmus aus..."):
     instance, result = _compute_run(
-        int(n_points), int(k), spread, shape, int(n_neighbors), resolution, int(seed)
+        int(n_points), int(k), spread, density_imbalance, bridge_strength, shape,
+        int(n_neighbors), resolution, int(seed)
     )
 
 max_step = len(result.passes) - 1
-run_key = (n_points, k, spread, shape, n_neighbors, resolution, seed)
+run_key = (n_points, k, spread, density_imbalance, bridge_strength, shape, n_neighbors, resolution, seed)
 if "ld_step" not in st.session_state or st.session_state.get("ld_step_owner") != run_key:
     st.session_state["ld_step"] = max_step
     st.session_state["ld_step_owner"] = run_key
@@ -227,14 +249,14 @@ st.plotly_chart(
 )
 
 true_k = instance.k
-gap_from_true = abs(result.n_communities - true_k)
+gap_from_true = result.n_communities - true_k
 if gap_from_true == 0:
     st.success(
         f"✅ Leiden findet die wahre Gruppenzahl ({true_k}) UND einen Rand-Index von "
         f"{leiden_score:.2f} - ganz ohne dass irgendwo ein k eingestellt wurde. Jede "
         f"k-Means-artige Methode bräuchte genau diese Zahl vorab."
     )
-else:
+elif gap_from_true < 0:
     st.warning(
         f"⚠️ Das Auflösungslimit der Modularität in Aktion: Leiden findet hier "
         f"{result.n_communities} Gruppen statt der wahren {true_k} - viele kleine, klar "
@@ -242,6 +264,16 @@ else:
         f"klein relativ zur Gesamtgraphgröße sind. 'Kein k nötig' ist kein Free Lunch: "
         f"probieren Sie einen höheren Auflösungsparameter γ in der Seitenleiste - er "
         f"hilft, behebt das Limit aber nicht vollständig."
+    )
+else:
+    st.warning(
+        f"⚠️ Leiden findet hier {result.n_communities} Gruppen statt der wahren {true_k} "
+        f"- mehr, nicht weniger: bei Dichte-Ungleichgewicht oder einer Punktbrücke "
+        f"(Seitenleiste) kann ein dünn verbundener Bereich zu einer eigenen kleinen "
+        f"Community werden, statt zwei echte Gruppen fälschlich zu verschmelzen (der "
+        f"Rand-Index bleibt trotzdem meist hoch, siehe oben - anders als bei DBSCAN oder "
+        f"Single-Linkage-Chaining). Ein niedrigerer Auflösungsparameter γ fasst solche "
+        f"kleinen Community-Fragmente eher wieder zusammen."
     )
 
 st.markdown("---")
