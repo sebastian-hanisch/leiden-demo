@@ -43,6 +43,15 @@ Gewinnformel. Als „Qualitätsfunktion“-Regler in der Seitenleiste umschaltba
 Preset "Auflösungslimit richtig behoben (CPM)" für den direkten Beweis auf demselben
 Szenario, an dem Modularität bei jedem getesteten γ scheitert.
 
+Ebenfalls ergänzt: **Konsensus-Clustering** (Lancichinetti & Fortunato, 2012,
+*"Consensus clustering in complex networks"*, Scientific Reports 2, 336) macht die
+Seed-Abhängigkeit des lokalen Verschiebens (zufällige Besuchsreihenfolge → verschiedene,
+ähnlich gute lokale Optima) sichtbar UND behebt sie: mehrere unabhängige Läufe werden zu
+einer Konsensus-Matrix zusammengefasst, die selbst wie ein neuer gewichteter Graph erneut
+geclustert wird, bis alle Läufe exakt übereinstimmen. Funktioniert unverändert mit beiden
+Qualitätsfunktionen, da nur die zurückgegebenen Partitionen einfließen. Siehe Preset
+"Ergebnis hängt vom Zufall ab (Konsensus hilft)".
+
 ## Warum diese Demo anders aufgebaut ist
 
 Die Presets legen mehrere Achsen offen:
@@ -65,6 +74,9 @@ Die Presets legen mehrere Achsen offen:
   aber zu leichtem Überclustern statt echtem Falsch-Verschmelzen.
 - **Auflösungslimit richtig behoben (CPM)**: identisches Szenario wie "Auflösungsgrenze",
   aber mit CPM statt Modularität - findet die wahren 20 Gruppen fast exakt.
+- **Ergebnis hängt vom Zufall ab (Konsensus hilft)**: stärker überlappende Gruppen -
+  einzelne Läufe stimmen nur zu ~96% überein und finden teils mehr Gruppen als die
+  wahren 6; Konsensus-Clustering liefert eine reproduzierbare, meist bessere Antwort.
 
 ## Visualisierung
 
@@ -116,22 +128,27 @@ darf bis knapp an `N_POINTS_MAX-1` heranreichen (ein vollständiger Graph) - die
   Standard-Modularität verschmilzt viele kleine, klar getrennte Gruppen (Auflösungslimit);
   ein höherer Auflösungsparameter hilft, aber nicht vollständig; CPM mit passend
   skaliertem γ löst dasselbe Szenario dagegen fast exakt auf.
-- **Alle sechs Presets direkt gegen das tatsächliche App-Verhalten getestet** (Szenario-
+- **Alle sieben Presets direkt gegen das tatsächliche App-Verhalten getestet** (Szenario-
   Seed = Algorithmus-Seed, wie `app.py` es macht - etabliertes Muster aus
   dpmm-/spectral-/divisive-demo).
+- **Konsensus-Clustering eigens getestet**: Reproduzierbarkeit bei gleichem Seed,
+  tatsächliche Konvergenz (scharfe Konsensus-Matrix) innerhalb der Sicherheitsgrenze,
+  Funktionieren mit beiden Qualitätsfunktionen, sowie ein Preset-Nachweis, dass das
+  gewählte Szenario echte Seed-Abhängigkeit zeigt (sonst wäre nichts zu konsentieren) UND
+  Konsensus-Clustering sie zuverlässig auflöst.
 
 ## Dateistruktur
 
 | Datei | Inhalt |
 |---|---|
-| `app.py` | Streamlit-Hauptablauf: Presets, Einstellungen, Qualitätsfunktions-Umschalter, Pass-Schrittregler, Qualitäts-Kurve, Methoden-Vergleich, Formulierungs-Expander |
-| `ld_constants.py` | Defaults, Regler-Grenzen (inkl. separater CPM-Auflösungsskala), Sicherheitsgrenzen, `PRESETS` |
+| `app.py` | Streamlit-Hauptablauf: Presets, Einstellungen, Qualitätsfunktions-Umschalter, Pass-Schrittregler, Qualitäts-Kurve, Methoden-Vergleich, Konsensus-Clustering-Sektion, Formulierungs-Expander |
+| `ld_constants.py` | Defaults, Regler-Grenzen (inkl. separater CPM-Auflösungsskala), Sicherheitsgrenzen, Konsensus-Clustering-Parameter, `PRESETS` |
 | `ld_presets.py` | `SettingSpec`/`SETTING_SPECS`, Permalink-Logik, Presets, Zufalls-Seed-Button |
 | `ld_scenario.py` | Blobs (k bis 20, fester statt mit k mitwachsender Ring-Radius - das Vehikel für die Auflösungslimit-Szenarien) und Halbmonde/Bögen, plus `density_imbalance`/`bridge_strength` (hdbscan-demo-Konstruktionsparameter) |
-| `ld_algorithm.py` | Ähnlichkeitsgraph-Bau (wie spectral-demo), Modularität UND CPM mit Auflösungsparameter γ, Leiden (lokales Verschieben, Verfeinerung, Aggregation mit Knotengewichts-Fortführung, vollständiges Pass-Protokoll), plus eine testeigene Nur-lokales-Verschieben-Ablation |
+| `ld_algorithm.py` | Ähnlichkeitsgraph-Bau (wie spectral-demo), Modularität UND CPM mit Auflösungsparameter γ, Leiden (lokales Verschieben, Verfeinerung, Aggregation mit Knotengewichts-Fortführung, vollständiges Pass-Protokoll), Konsensus-Clustering, plus eine testeigene Nur-lokales-Verschieben-Ablation |
 | `ld_evaluation.py` | Rand-Index (from scratch, schließt Brückenpunkte aus), kleine k-Means-Referenz (mit internen Neustarts) für den "kein k nötig"-Methodenvergleich |
 | `ld_visualization.py` | Ähnlichkeitsgraph-Diagramm, Qualitäts-über-Pässe-Kurve (Achsentitel je nach Qualitätsfunktion), Punktwolke, Kleinmultiples, Methoden-Vergleichsdiagramm (Plotly) |
-| `tests/` | Handinstanz, Qualitäts-Monotonie (Modularität + CPM + Mehrebenen-Regression), Zusammenhangsgarantie, `leidenalg`-/`networkx`-Kreuzvergleiche, Kern-Nachweise, Preset-gegen-App-Verhalten-Tests, AppTest-Smoke-Test |
+| `tests/` | Handinstanz, Qualitäts-Monotonie (Modularität + CPM + Mehrebenen-Regression), Zusammenhangsgarantie, `leidenalg`-/`networkx`-Kreuzvergleiche, Kern-Nachweise, Konsensus-Clustering-Tests, Preset-gegen-App-Verhalten-Tests, AppTest-Smoke-Test |
 
 ## Lokal ausführen
 

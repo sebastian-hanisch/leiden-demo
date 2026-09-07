@@ -17,7 +17,7 @@ Lauffähig mit: streamlit run app.py
 import streamlit as st
 
 import ld_constants as C
-from ld_algorithm import build_similarity_graph, run
+from ld_algorithm import build_similarity_graph, consensus_clustering, run
 from ld_evaluation import kmeans_across_k, rand_index
 from ld_presets import (
     apply_preset,
@@ -57,6 +57,14 @@ def _compute_mini_run(instance, n_neighbors, quality_function, resolution, seed)
 def _compute_kmeans_comparison(instance, seed, leiden_k):
     k_values = sorted({max(2, leiden_k - 2), max(2, leiden_k - 1), leiden_k, leiden_k + 1, leiden_k + 2})
     return kmeans_across_k(instance.as_array(), instance.true_labels, k_values, seed)
+
+
+@st.cache_data(show_spinner=False)
+def _compute_consensus(instance, n_neighbors, quality_function, resolution):
+    return consensus_clustering(
+        instance.as_array(), n_neighbors, resolution, C.COMPARISON_SEED, quality_function=quality_function,
+        n_runs=C.CONSENSUS_N_RUNS, max_rounds=C.CONSENSUS_MAX_ROUNDS,
+    )
 
 
 st.title("🕸️ Leiden-Algorithmus: automatische Depot-Gruppierung ohne Ziel-k")
@@ -120,6 +128,7 @@ PRESET_HELP = {
     "Auflösungsparameter als Kompromiss": "Dieselbe Szenerie mit höherem γ - hilft, behebt das Auflösungslimit aber nicht vollständig.",
     "Kombinierter Härtefall (Dichte + Brücke)": "Dieselben zwei Härtefälle, an denen DBSCAN bzw. Single-Linkage-Chaining scheitern - Leiden übersteht beide deutlich besser (Rand-Index meist >0.95), ist aber nicht perfekt immun: die Brückenpunkte selbst bilden gelegentlich eine eigene kleine Community, statt zwei echte Gruppen fälschlich zu verschmelzen.",
     "Auflösungslimit richtig behoben (CPM)": "Exakt dasselbe Szenario wie 'Auflösungsgrenze', aber mit CPM statt Modularität als Qualitätsfunktion - findet die wahren 20 Gruppen fast exakt, was Modularität bei KEINEM Auflösungsparameter γ schafft.",
+    "Ergebnis hängt vom Zufall ab (Konsensus hilft)": "Stärker überlappende Gruppen - einzelne Läufe landen je nach Zufalls-Seed in leicht unterschiedlichen lokalen Optima. Konsensus-Clustering (weiter unten) liefert eine deterministische, meist bessere Antwort.",
 }
 preset_cols = st.columns(len(C.PRESETS))
 for i, name in enumerate(C.PRESETS.keys()):
@@ -326,6 +335,62 @@ else:
 
 st.markdown("---")
 
+st.subheader("📐 Wie stark hängt das Ergebnis vom Zufalls-Seed ab?")
+st.markdown(
+    """
+Lokales Verschieben besucht Knoten in zufälliger Reihenfolge - je nach Seed kann das zu
+unterschiedlichen (aber ähnlich guten) lokalen Optima führen, besonders bei stärker
+überlappenden Gruppen. **Konsensus-Clustering** (Lancichinetti & Fortunato, 2012,
+*"Consensus clustering in complex networks"*, Scientific Reports 2, 336) macht diese
+Abhängigkeit sichtbar und behebt sie zugleich: mehrere unabhängige Läufe werden zu einer
+Konsensus-Matrix zusammengefasst (wie oft landeten zwei Punkte in derselben Gruppe?),
+die dann selbst wie ein neuer gewichteter Graph erneut geclustert wird - wiederholt, bis
+alle Läufe exakt übereinstimmen.
+    """
+)
+
+with st.spinner(f"Führe Konsensus-Clustering ({C.CONSENSUS_N_RUNS} Läufe je Runde) aus..."):
+    consensus_result = _compute_consensus(instance, int(n_neighbors), quality_function, resolution)
+consensus_ri = rand_index(instance.true_labels, consensus_result.final_labels)
+
+cc1, cc2, cc3 = st.columns(3)
+cc1.metric(
+    "Übereinstimmung einzelner Läufe", f"{consensus_result.single_run_agreement:.3f}",
+    help=f"Mittlere paarweise Punktpaar-Übereinstimmung zwischen {C.CONSENSUS_N_RUNS} "
+    "unabhängigen Läufen VOR jeder Konsensus-Bildung - 1.0 bedeutet, der Seed spielt "
+    "hier gar keine Rolle.",
+)
+cc2.metric("Konsensus-Runden bis Konvergenz", consensus_result.n_rounds)
+cc3.metric("Rand-Index nach Konsensus", f"{consensus_ri:.3f}")
+
+if consensus_result.single_run_agreement > 0.999:
+    st.info(
+        f"ℹ️ Bei diesem Szenario ist Leiden bereits über alle Seeds hinweg stabil "
+        f"(Übereinstimmung {consensus_result.single_run_agreement:.3f}) - Konsensus-"
+        f"Clustering ändert hier nichts, weil es nichts zu vereinheitlichen gibt."
+    )
+else:
+    st.success(
+        f"✅ Einzelne Läufe stimmen nur zu {consensus_result.single_run_agreement:.1%} "
+        f"überein - der Zufalls-Seed spielt hier also eine echte Rolle. Nach "
+        f"{consensus_result.n_rounds} Konsensus-Runde(n) liefert das Verfahren eine "
+        f"REPRODUZIERBARE Antwort mit Rand-Index {consensus_ri:.3f}."
+    )
+
+compare_col1, compare_col2 = st.columns(2)
+compare_col1.plotly_chart(
+    build_scatter_figure(instance.as_array(), result.final_labels),
+    width="stretch", key="single_run_for_consensus_compare",
+)
+compare_col1.caption(f"Ein einzelner Lauf (aktueller Seed {int(seed)}): {result.n_communities} Gruppen")
+compare_col2.plotly_chart(
+    build_scatter_figure(instance.as_array(), consensus_result.final_labels),
+    width="stretch", key="consensus_scatter",
+)
+compare_col2.caption(f"Konsensus aus {C.CONSENSUS_N_RUNS} Läufen: {consensus_result.n_communities} Gruppen")
+
+st.markdown("---")
+
 with st.expander("📐 Mathematische Formulierung"):
     st.markdown(
         r"""
@@ -395,8 +460,23 @@ auf die konkrete Kantengewichts-Verteilung abgestimmt werden. Kein Ziel-k mehr n
 Auflösungsparameter mit eigener Schwäche - bei Modularität eine strukturelle, bei CPM nur
 eine Kalibrierungsfrage.
 
-Implementiert in `ld_algorithm.py` (Leiden-Maschinerie, `modularity`, `cpm_quality`) und
-`ld_evaluation.py` (Rand-Index, k-Means-Referenz).
+**Konsensus-Clustering** (Lancichinetti & Fortunato, 2012): löst eine dritte, von der
+Qualitätsfunktion unabhängige Schwäche - die Abhängigkeit vom Zufalls-Seed der
+Besuchsreihenfolge beim lokalen Verschieben. Aus $R$ unabhängigen Läufen mit Partitionen
+$\{c^{(1)}, \dots, c^{(R)}\}$ wird eine Konsensus-Matrix gebaut:
+
+$$
+D_{ij} = \frac{1}{R}\sum_{r=1}^{R} \delta\!\left(c^{(r)}_i, c^{(r)}_j\right)
+$$
+
+($D_{ij}$ = Anteil der Läufe, in denen $i$ und $j$ in derselben Community landeten).
+$D$ wird als NEUER gewichteter Graph behandelt und erneut geclustert - wiederholt, bis
+$D$ "kristallklar" ist (jeder Eintrag exakt 0 oder 1), was beweist, dass alle $R$ Läufe
+exakt übereinstimmen. Funktioniert unabhängig von der gewählten Qualitätsfunktion, da es
+nur auf den zurückgegebenen Partitionen aufbaut, nicht auf deren interner Berechnung.
+
+Implementiert in `ld_algorithm.py` (Leiden-Maschinerie, `modularity`, `cpm_quality`,
+`consensus_clustering`) und `ld_evaluation.py` (Rand-Index, k-Means-Referenz).
         """
     )
 

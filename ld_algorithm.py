@@ -22,7 +22,20 @@ Leiden-Maschinerie fuer beide:
 Bewusst ohne igraph/leidenalg zur Laufzeit implementiert. `leidenalg`/`python-igraph`
 dienen in tests/ nur als unabhängiger Kreuzvergleich (fuer BEIDE Qualitätsfunktionen,
 leidenalg unterstuetzt CPM nativ ueber `CPMVertexPartition`), `networkx` nur für einen
-exakten Modularitäts-Formel-Kreuzvergleich (networkx kennt kein CPM)."""
+exakten Modularitäts-Formel-Kreuzvergleich (networkx kennt kein CPM).
+
+Zusätzlich **Konsensus-Clustering** (Lancichinetti & Fortunato, 2012, "Consensus
+clustering in complex networks", Scientific Reports 2, 336): lokales Verschieben
+besucht Knoten in zufälliger Reihenfolge, wodurch verschiedene Seeds - besonders bei
+dichten oder stark überlappenden Szenarien - unterschiedliche (wenn auch ähnlich gute)
+lokale Optima liefern können. `consensus_clustering` führt Leiden `n_runs`-mal
+unabhängig aus, baut daraus eine Konsensus-Matrix (Anteil der Läufe, in denen zwei
+Punkte zusammen landeten) und behandelt diese Matrix als NEUEN gewichteten Graphen für
+eine erneute Runde - wiederholt, bis die Matrix "kristallklar" wird (jeder Eintrag 0
+oder 1, d.h. alle Läufe liefern exakt dieselbe Partition). Ersetzt die Abhängigkeit vom
+Zufall der Besuchsreihenfolge durch eine explizite Mehrheitsentscheidung über viele
+unabhängige Läufe - funktioniert mit BEIDEN Qualitätsfunktionen, da es nur auf den
+jeweils zurückgegebenen Partitionen aufbaut, nicht auf deren internen Details."""
 
 from dataclasses import dataclass
 
@@ -54,6 +67,17 @@ class RunResult:
     @property
     def n_communities(self):
         return self.passes[-1].n_communities
+
+
+@dataclass(frozen=True)
+class ConsensusResult:
+    final_labels: tuple  # Labels (0..k-1, fortlaufend) der finalen Konsensus-Partition
+    n_communities: int
+    n_rounds: int  # Anzahl Konsensus-Runden bis zur Konvergenz (inkl. der allerersten)
+    converged: bool  # True, wenn eine "kristallklare" (nur 0/1) Konsensus-Matrix erreicht wurde
+    single_run_agreement: float  # mittlere paarweise Punktpaar-Uebereinstimmung der n_runs
+    # unabhaengigen EINZEL-Laeufe VOR jeder Konsensus-Bildung - misst, wie stark das
+    # Ergebnis ohne Konsensus vom Zufalls-Seed abhaengt (1.0 = alle Laeufe identisch)
 
 
 def build_similarity_graph(data, n_neighbors):
@@ -398,3 +422,84 @@ def run_local_moving_only(data, n_neighbors, resolution, seed, quality_function=
         base_adjacency, resolution, seed, use_refinement=False, quality_function=quality_function, max_levels=max_levels
     )
     return RunResult(passes=passes, resolution=resolution, quality_function=quality_function)
+
+
+def _pairwise_agreement(label_sets):
+    """Mittlere paarweise Punktpaar-Uebereinstimmung ueber ALLE Paare von Partitionen in
+    `label_sets` (wie ein Rand-Index zwischen je zwei Läufen statt gegen eine
+    Ground-Truth) - 1.0 bedeutet, alle Läufe liefern exakt dieselbe Partition (bis auf
+    Umbenennung der Labels), niedriger bedeutet echte Seed-Abhängigkeit."""
+    label_sets = [np.asarray(l) for l in label_sets]
+    n = len(label_sets[0])
+    if n < 2 or len(label_sets) < 2:
+        return 1.0
+    iu = np.triu_indices(n, k=1)
+    same_matrices = [(labels[:, None] == labels[None, :])[iu] for labels in label_sets]
+    agreements = []
+    for a in range(len(same_matrices)):
+        for b in range(a + 1, len(same_matrices)):
+            agreements.append(np.mean(same_matrices[a] == same_matrices[b]))
+    return float(np.mean(agreements))
+
+
+def consensus_clustering(
+    data, n_neighbors, resolution, seed, quality_function="modularity", n_runs=20, max_rounds=8
+):
+    """Konsensus-Clustering (Lancichinetti & Fortunato, 2012) - siehe Modul-Docstring für
+    die Grundidee. Ablauf:
+
+    1. `n_runs` unabhängige Leiden-Läufe auf dem Basis-Ähnlichkeitsgraphen (oder, ab der
+       zweiten Runde, auf der Konsensus-Matrix der vorigen Runde).
+    2. Konsensus-Matrix bauen: Eintrag (i,j) = Anteil der Läufe, in denen i und j in
+       derselben Community landeten.
+    3. Ist die Matrix bereits "kristallklar" (nur 0/1-Einträge) - fertig, alle Läufe
+       stimmen exakt überein.
+    4. Sonst: die Konsensus-Matrix selbst wird zum neuen gewichteten Graphen für die
+       nächste Runde (Schritt 1), bis zu `max_rounds`-mal.
+
+    Braucht `_run_passes` direkt (nicht `run`), da ab Runde 2 die "Kanten" bereits eine
+    Konsensus-Matrix sind, kein aus Rohdaten gebauter Ähnlichkeitsgraph mehr."""
+    data = np.asarray(data, dtype=float)
+    base_adjacency = build_similarity_graph(data, n_neighbors)
+    n = len(data)
+
+    seed_rng = np.random.default_rng(seed)
+    current_adjacency = base_adjacency
+    current_labels = None
+    single_run_agreement = None
+    converged = False
+    n_rounds = 0
+
+    for round_idx in range(max_rounds):
+        n_rounds = round_idx + 1
+        run_seeds = seed_rng.integers(0, 2**31 - 1, size=n_runs)
+        current_labels = []
+        for s in run_seeds:
+            passes = _run_passes(
+                current_adjacency, resolution, int(s), use_refinement=True, quality_function=quality_function
+            )
+            current_labels.append(np.asarray(passes[-1].partition))
+
+        if round_idx == 0:
+            single_run_agreement = _pairwise_agreement(current_labels)
+
+        consensus = np.zeros((n, n))
+        for labels in current_labels:
+            consensus += (labels[:, None] == labels[None, :]).astype(float)
+        consensus /= n_runs
+        np.fill_diagonal(consensus, 0.0)
+
+        if np.all((consensus == 0.0) | (consensus == 1.0)):
+            converged = True
+            break
+
+        current_adjacency = consensus
+
+    final_labels = _relabel(current_labels[0])
+    return ConsensusResult(
+        final_labels=tuple(int(x) for x in final_labels),
+        n_communities=int(final_labels.max()) + 1,
+        n_rounds=n_rounds,
+        converged=converged,
+        single_run_agreement=single_run_agreement,
+    )

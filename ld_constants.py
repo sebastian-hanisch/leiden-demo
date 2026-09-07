@@ -57,6 +57,15 @@ N_POINTS_HARD_MAX = 300
 # an den Szenario-Seed koppeln).
 COMPARISON_SEED = 1
 
+# Konsensus-Clustering (Lancichinetti & Fortunato, 2012): Anzahl unabhaengiger Leiden-
+# Laeufe je Runde und Sicherheitsgrenze fuer die Anzahl Konsensus-Runden. Empirisch
+# ermittelt (gemessen, nicht geschaetzt): konvergiert auf den Szenarien dieser Demo
+# durchgaengig in 2-3 Runden, 6 ist ein grosszuegiger Sicherheitsabstand. 15 Laeufe je
+# Runde liefern dieselbe Ergebnisqualitaet wie 20, bei ca. halber Laufzeit - bei
+# n_points=300 dauert der worst case (alle 6 Runden ausgeschoepft) gemessen ~1.8s.
+CONSENSUS_N_RUNS = 15
+CONSENSUS_MAX_ROUNDS = 6
+
 PRESETS = {
     "Einfaches Beispiel": {
         "n_points": 120, "k": 4, "spread": 0.12, "density_imbalance": 0.0, "bridge_strength": 0.0,
@@ -81,5 +90,9 @@ PRESETS = {
     "Auflösungslimit richtig behoben (CPM)": {
         "n_points": 60, "k": 20, "spread": 0.05, "density_imbalance": 0.0, "bridge_strength": 0.0,
         "shape": "blobs", "n_neighbors": 4, "quality_function": "cpm", "resolution": 0.5, "seed": 1,
+    },
+    "Ergebnis hängt vom Zufall ab (Konsensus hilft)": {
+        "n_points": 150, "k": 6, "spread": 0.3, "density_imbalance": 0.0, "bridge_strength": 0.0,
+        "shape": "blobs", "n_neighbors": 8, "quality_function": "modularity", "resolution": 1.0, "seed": 3,
     },
 }

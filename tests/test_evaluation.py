@@ -1,7 +1,7 @@
 import pytest
 
 import ld_constants as C
-from ld_algorithm import run
+from ld_algorithm import consensus_clustering, run
 from ld_evaluation import kmeans_across_k, kmeans_baseline_labels, rand_index
 from ld_scenario import generate_instance
 
@@ -148,3 +148,28 @@ def test_cpm_preset_solves_the_resolution_limit_that_modularity_could_not():
     assert modularity_result.n_communities < modularity_instance.k - 5
     assert cpm_result.n_communities >= cpm_instance.k - 1
     assert cpm_ri > 0.95
+
+
+def test_consensus_preset_genuinely_shows_seed_sensitivity_and_consensus_fixes_it():
+    """Kern-Nachweis fuer das Preset 'Ergebnis haengt vom Zufall ab (Konsensus hilft)':
+    ein einzelner Lauf muss tatsaechlich seed-abhaengig sein (sonst waere Konsensus-
+    Clustering hier ueberfluessig demonstriert), UND die Konsensus-Prozedur muss trotzdem
+    eine gute, reproduzierbare Partition liefern."""
+    instance, p, single_result, single_ri = _run_preset_as_app_would(
+        "Ergebnis hängt vom Zufall ab (Konsensus hilft)"
+    )
+    assert p["quality_function"] == "modularity"
+
+    other_seed_result = run(
+        instance.as_array(), p["n_neighbors"], p["resolution"], seed=p["seed"] + 100,
+        quality_function=p["quality_function"],
+    )
+    assert single_result.final_labels != other_seed_result.final_labels
+
+    consensus_result = consensus_clustering(
+        instance.as_array(), p["n_neighbors"], p["resolution"], C.COMPARISON_SEED,
+        quality_function=p["quality_function"], n_runs=C.CONSENSUS_N_RUNS, max_rounds=C.CONSENSUS_MAX_ROUNDS,
+    )
+    assert consensus_result.single_run_agreement < 0.99
+    consensus_ri = rand_index(instance.true_labels, consensus_result.final_labels)
+    assert consensus_ri > 0.8

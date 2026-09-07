@@ -2,8 +2,10 @@ import numpy as np
 import pytest
 
 from ld_algorithm import (
+    _pairwise_agreement,
     build_similarity_graph,
     community_is_connected,
+    consensus_clustering,
     cpm_quality,
     local_moving,
     modularity,
@@ -11,6 +13,7 @@ from ld_algorithm import (
     run,
     run_local_moving_only,
 )
+from ld_evaluation import rand_index
 from ld_scenario import generate_instance
 
 
@@ -151,6 +154,72 @@ def test_cpm_never_decreases_across_passes_with_multilevel_aggregation(seed):
     q_values = [p.quality for p in result.passes]
     for i in range(len(q_values) - 1):
         assert q_values[i + 1] >= q_values[i] - 1e-9
+
+
+def test_pairwise_agreement_identical_partitions_is_one():
+    """Zwei identische Label-Zuweisungen (auch bei unterschiedlicher Label-Nummerierung
+    der Gruppen, solange die Paar-Zugehoerigkeit gleich ist) muessen Uebereinstimmung
+    1.0 ergeben."""
+    a = np.array([0, 0, 1, 1, 2, 2])
+    b = np.array([0, 0, 1, 1, 2, 2])
+    assert _pairwise_agreement([a, b]) == pytest.approx(1.0)
+
+
+def test_pairwise_agreement_disjoint_partitions_is_low():
+    """Eine Ein-Cluster-Partition (alle Punktpaare 'gleich') gegen die feinstmoegliche
+    Partition (alle Punktpaare 'verschieden') teilen kein einziges Paar-Urteil -
+    Uebereinstimmung muss 0.0 sein."""
+    all_together = np.array([0, 0, 0, 0])
+    all_apart = np.array([0, 1, 2, 3])
+    assert _pairwise_agreement([all_together, all_apart]) == pytest.approx(0.0)
+
+
+def test_pairwise_agreement_single_run_is_perfect():
+    """Randfall: weniger als zwei Laeufe koennen sich nicht widersprechen, per
+    Definition 1.0."""
+    assert _pairwise_agreement([np.array([0, 1, 2])]) == 1.0
+
+
+def test_consensus_clustering_reproducible_given_seed():
+    """Konsensus-Clustering muss bei gleichem Seed exakt dasselbe Ergebnis liefern -
+    wie jede andere Zufallsroutine dieser Demo (siehe COMPARISON_SEED-Konvention)."""
+    instance = generate_instance(n_points=90, k=4, spread=0.2, shape="blobs", seed=1)
+    data = instance.as_array()
+    first = consensus_clustering(data, n_neighbors=8, resolution=1.0, seed=42, n_runs=5, max_rounds=3)
+    second = consensus_clustering(data, n_neighbors=8, resolution=1.0, seed=42, n_runs=5, max_rounds=3)
+    assert first.final_labels == second.final_labels
+    assert first.n_communities == second.n_communities
+
+
+def test_consensus_clustering_converges_on_seed_sensitive_preset():
+    """Das eigens dafuer gebaute Preset 'Ergebnis haengt vom Zufall ab (Konsensus hilft)'
+    muss innerhalb von CONSENSUS_MAX_ROUNDS tatsaechlich konvergieren (Konsensus-Matrix
+    wird 'scharf') und dabei eine gueltige, nicht-triviale Partition liefern - sonst waere
+    das Sicherheitslimit max_rounds in der Praxis die einzige Bremse, nicht echte
+    Konvergenz."""
+    instance = generate_instance(n_points=150, k=6, spread=0.3, shape="blobs", seed=3)
+    result = consensus_clustering(
+        instance.as_array(), n_neighbors=8, resolution=1.0, seed=1, n_runs=15, max_rounds=6
+    )
+    assert result.converged
+    assert result.n_rounds <= 6
+    assert result.n_communities >= 2
+    assert 0.0 <= result.single_run_agreement <= 1.0
+    rand_index_value = rand_index(instance.true_labels, result.final_labels)
+    assert rand_index_value > 0.7
+
+
+def test_consensus_clustering_works_with_cpm():
+    """Konsensus-Clustering haengt nur von den zurueckgegebenen Partitionen ab, nicht von
+    der internen Gewinnformel - muss also mit CPM genauso funktionieren wie mit
+    Modularitaet (keine Sonderbehandlung im Code, aber ein echter Test schadet nicht)."""
+    instance = generate_instance(n_points=60, k=4, spread=0.15, shape="blobs", seed=2)
+    result = consensus_clustering(
+        instance.as_array(), n_neighbors=6, resolution=0.01, seed=1,
+        quality_function="cpm", n_runs=5, max_rounds=3,
+    )
+    assert result.n_communities >= 1
+    assert len(result.final_labels) == 60
 
 
 def test_all_communities_are_connected():
