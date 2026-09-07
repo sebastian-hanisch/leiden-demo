@@ -11,6 +11,8 @@ import numpy as np
 
 from ld_constants import ARC_RADIUS, ARC_RING_RADIUS, RING_RADIUS
 
+MIN_STD_FRACTION = 0.05
+
 
 @dataclass(frozen=True)
 class ClusteringInstance:
@@ -28,15 +30,18 @@ class ClusteringInstance:
 
 
 def _generate_blobs(n_points, k, spread, rng):
-    """Fester Ring-Radius, UNABHAENGIG von k - anders als kmeans-demo/spectral-demo
-    (die den Radius mit k mitwachsen lassen, um Ueberlappung bei vielen Gruppen zu
-    vermeiden). Hier bewusst so belassen: bei hohem k ruecken die Gruppen dadurch enger
-    zusammen, was ueberhaupt erst den fuer diese Demo zentralen Auflösungslimit-Effekt
-    ermoeglicht (siehe project-memory) - waeren die Gruppen immer proportional weiter
-    auseinander, koennte Modularitaetsoptimierung sie nie faelschlich verschmelzen."""
-    angles = np.linspace(0, 2 * np.pi, k, endpoint=False) + rng.uniform(-0.1, 0.1, size=k)
+    """Fester Ring-Radius, UNABHAENGIG von k - wie in allen Geschwister-Demos (kmeans-demo,
+    spectral-demo etc. skalieren ihren Blob-Ring-Radius ebenfalls nicht mit k). Hier ist
+    das aber besonders wichtig, bewusst so belassen und nicht "korrigiert": bei hohem k
+    ruecken die Gruppen dadurch enger zusammen, was ueberhaupt erst den fuer diese Demo
+    zentralen Auflösungslimit-Effekt ermoeglicht (siehe project-memory) - waeren die
+    Gruppen immer proportional weiter auseinander, koennte Modularitaetsoptimierung sie
+    nie faelschlich verschmelzen. (Die MOONS-Variante unten skaliert ihren Ring-Radius bei
+    k>2 dagegen mit k - dort sind die Elemente ganze Bögen statt Punkte, die bei hohem k
+    sonst überlappen würden, siehe `_generate_moons`.)"""
+    angles = np.linspace(0, 2 * np.pi, k, endpoint=False) + rng.uniform(-0.15, 0.15, size=k)
     centers = np.stack([RING_RADIUS * np.cos(angles), RING_RADIUS * np.sin(angles)], axis=1)
-    std = max(spread, 0.05) * RING_RADIUS
+    std = max(spread, MIN_STD_FRACTION) * RING_RADIUS
 
     counts = np.full(k, n_points // k)
     counts[-1] += n_points - counts.sum()
@@ -54,7 +59,7 @@ def _generate_moons(n_points, k, spread, rng):
     Blütenblätter auf einem Ring, konkave Seite zum Zentrum."""
     counts = np.full(k, n_points // k)
     counts[-1] += n_points - counts.sum()
-    noise_std = max(spread, 0.05) * ARC_RADIUS * 0.3
+    noise_std = max(spread, MIN_STD_FRACTION) * ARC_RADIUS * 0.3
 
     if k == 2:
         t1 = rng.uniform(0, np.pi, counts[0])
