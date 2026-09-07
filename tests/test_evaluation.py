@@ -89,7 +89,9 @@ def _run_preset_as_app_would(preset_name):
         p["n_points"], p["k"], p["spread"], p["shape"], p["seed"],
         density_imbalance=p["density_imbalance"], bridge_strength=p["bridge_strength"],
     )
-    result = run(instance.as_array(), p["n_neighbors"], p["resolution"], p["seed"])
+    result = run(
+        instance.as_array(), p["n_neighbors"], p["resolution"], p["seed"], quality_function=p["quality_function"]
+    )
     ri = rand_index(instance.true_labels, result.final_labels)
     return instance, p, result, ri
 
@@ -130,3 +132,19 @@ def test_combined_hardcase_preset_survives_density_imbalance_and_bridge_much_bet
     assert p["density_imbalance"] > 0 and p["bridge_strength"] > 0
     assert ri > 0.95
     assert result.n_communities >= instance.k
+
+
+def test_cpm_preset_solves_the_resolution_limit_that_modularity_could_not():
+    """Kern-Nachweis fuer CPM als echte Verbesserung, nicht nur eine Randnotiz: exakt
+    dasselbe Szenario wie das 'Auflösungsgrenze'-Preset (k=20 kleine Gruppen), bei dem
+    Modularitaet bei JEDEM getesteten gamma in [0.3, 4.0] (siehe
+    test_resolution_limit_preset_matches_actual_app_behavior /
+    test_resolution_compromise_preset_matches_actual_app_behavior oben) klar unter der
+    wahren Gruppenzahl bleibt - CPM mit passend skaliertem gamma findet sie fast exakt."""
+    modularity_instance, _, modularity_result, _ = _run_preset_as_app_would("Auflösungsgrenze")
+    cpm_instance, cpm_p, cpm_result, cpm_ri = _run_preset_as_app_would("Auflösungslimit richtig behoben (CPM)")
+
+    assert cpm_p["quality_function"] == "cpm"
+    assert modularity_result.n_communities < modularity_instance.k - 5
+    assert cpm_result.n_communities >= cpm_instance.k - 1
+    assert cpm_ri > 0.95

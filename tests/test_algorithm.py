@@ -4,6 +4,7 @@ import pytest
 from ld_algorithm import (
     build_similarity_graph,
     community_is_connected,
+    cpm_quality,
     local_moving,
     modularity,
     refine,
@@ -29,6 +30,59 @@ def test_hand_computed_modularity_two_triangles():
 
     # Die Ein-Cluster-Partition (alles verschmolzen) hat nachweislich niedrigere Modularitaet.
     assert modularity(adjacency, [0, 0, 0, 0, 0, 0], resolution=1.0) == pytest.approx(0.0)
+
+
+def test_hand_computed_cpm_two_triangles():
+    """Gleiches Beispiel wie test_hand_computed_modularity_two_triangles oben: zwei
+    Dreiecke {0,1,2}/{3,4,5}, verbunden durch die Bruecke (2,3). Von Hand: jede Community
+    hat e_C=3 (3 interne Kanten) und n_C=3 -> C(3,2)=3, also H_CPM(gamma=1) = (3-3)+(3-3)
+    = 0. Die Ein-Cluster-Partition (e_C=7, n_C=6 -> C(6,2)=15) hat H_CPM(gamma=1) = 7-15
+    = -8, nachweislich schlechter."""
+    adjacency = np.zeros((6, 6))
+    edges = [(0, 1), (0, 2), (1, 2), (3, 4), (3, 5), (4, 5), (2, 3)]
+    for i, j in edges:
+        adjacency[i, j] = 1
+        adjacency[j, i] = 1
+
+    labels = [0, 0, 0, 1, 1, 1]
+    assert cpm_quality(adjacency, labels, resolution=1.0) == pytest.approx(0.0)
+    assert cpm_quality(adjacency, [0, 0, 0, 0, 0, 0], resolution=1.0) == pytest.approx(-8.0)
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_cpm_matches_leidenalg_reference_implementation(seed):
+    """Unabhaengiger Kreuzvergleich der CPM-Qualitaetsfunktion gegen leidenalg's
+    natives CPMVertexPartition - analog zum Modularitaets-Kreuzvergleich unten."""
+    ig = pytest.importorskip("igraph")
+    la = pytest.importorskip("leidenalg")
+
+    instance = generate_instance(n_points=90, k=4, spread=0.15, shape="blobs", seed=seed)
+    data = instance.as_array()
+    adjacency = build_similarity_graph(data, n_neighbors=8)
+
+    ours = np.array(
+        run(data, n_neighbors=8, resolution=0.002, seed=seed, quality_function="cpm").final_labels
+    )
+
+    n = len(adjacency)
+    edges, weights = [], []
+    for i in range(n):
+        for j in range(i + 1, n):
+            if adjacency[i, j] > 0:
+                edges.append((i, j))
+                weights.append(float(adjacency[i, j]))
+    graph = ig.Graph(n=n, edges=edges)
+    graph.es["weight"] = weights
+    partition = la.find_partition(
+        graph, la.CPMVertexPartition, weights="weight", resolution_parameter=0.002, seed=seed
+    )
+    theirs = np.array(partition.membership)
+
+    iu = np.triu_indices(n, k=1)
+    same_ours = (ours[:, None] == ours[None, :])[iu]
+    same_theirs = (theirs[:, None] == theirs[None, :])[iu]
+    agreement = float(np.mean(same_ours == same_theirs))
+    assert agreement > 0.85, f"seed {seed}: agreement {agreement}"
 
 
 def test_matches_networkx_modularity_formula():
@@ -62,9 +116,41 @@ def test_modularity_never_decreases_across_passes():
     for seed in range(5):
         instance = generate_instance(n_points=90, k=4, spread=0.2, shape="blobs", seed=seed)
         result = run(instance.as_array(), n_neighbors=8, resolution=1.0, seed=seed)
-        q_values = [p.modularity for p in result.passes]
+        q_values = [p.quality for p in result.passes]
         for i in range(len(q_values) - 1):
             assert q_values[i + 1] >= q_values[i] - 1e-9
+
+
+def test_cpm_never_decreases_across_passes():
+    """Dieselbe Monotonie-Invariante wie oben, aber fuer CPM statt Modularitaet -
+    unabhaengig von der Qualitaetsfunktion muss jede Phase H nur erhoehen oder
+    gleichlassen koennen."""
+    for seed in range(5):
+        instance = generate_instance(n_points=90, k=4, spread=0.2, shape="blobs", seed=seed)
+        result = run(instance.as_array(), n_neighbors=8, resolution=0.002, seed=seed, quality_function="cpm")
+        q_values = [p.quality for p in result.passes]
+        for i in range(len(q_values) - 1):
+            assert q_values[i + 1] >= q_values[i] - 1e-9
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_cpm_never_decreases_across_passes_with_multilevel_aggregation(seed):
+    """Regressionstest fuer einen echten Bug: die urspruengliche CPM-Gewinnformel im
+    lokalen Verschieben/Verfeinern liess den Faktor node_weights[i] (die "Groesse" eines
+    ggf. aggregierten Knotens) im Kosten-Term weg (resolution * comm_size[c] statt
+    resolution * comm_size[c] * node_weights[i]) - auf einem Szenario, das mehrere
+    Aggregationsebenen durchlaeuft (k=20 kleine Gruppen), fuehrte das dazu, dass Pass 1
+    eine SCHLECHTERE CPM-Qualitaet erreichte als Pass 0 (17.4 -> 2.45 in der
+    urspruenglichen manuellen Reproduktion) - ein voellig falsches Verhalten fuer einen
+    Algorithmus, der nachweislich monoton verbessern MUSS. Braucht ein Szenario, das
+    tatsaechlich >=2 Passes durchlaeuft, sonst wuerde der Bug (der erst bei aggregierten,
+    also nicht-Basisgraph-Knoten auftritt) gar nicht ausgeloest."""
+    instance = generate_instance(n_points=60, k=20, spread=0.05, shape="blobs", seed=seed)
+    result = run(instance.as_array(), n_neighbors=4, resolution=0.6, seed=seed, quality_function="cpm")
+    assert len(result.passes) >= 2, "Testszenario muss mehrere Aggregationsebenen durchlaufen"
+    q_values = [p.quality for p in result.passes]
+    for i in range(len(q_values) - 1):
+        assert q_values[i + 1] >= q_values[i] - 1e-9
 
 
 def test_all_communities_are_connected():

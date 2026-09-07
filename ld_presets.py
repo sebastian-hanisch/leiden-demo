@@ -24,6 +24,10 @@ def _shape_caster(v):
     return v if v in C.SHAPES else C.DEFAULT_SHAPE
 
 
+def _quality_function_caster(v):
+    return v if v in C.QUALITY_FUNCTIONS else C.DEFAULT_QUALITY_FUNCTION
+
+
 SETTING_SPECS = {
     "n_points_slider": SettingSpec("n", int, C.DEFAULT_N_POINTS, C.N_POINTS_MIN, C.N_POINTS_MAX),
     "k_slider": SettingSpec("k", int, C.DEFAULT_K, C.K_MIN, C.K_MAX),
@@ -39,8 +43,12 @@ SETTING_SPECS = {
     "n_neighbors_slider": SettingSpec(
         "nn", int, C.DEFAULT_N_NEIGHBORS, C.N_NEIGHBORS_MIN, C.N_NEIGHBORS_MAX
     ),
+    "quality_function_radio": SettingSpec("qf", _quality_function_caster, C.DEFAULT_QUALITY_FUNCTION),
     "resolution_slider": SettingSpec(
         "res", float, C.DEFAULT_RESOLUTION, C.RESOLUTION_MIN, C.RESOLUTION_MAX
+    ),
+    "cpm_resolution_slider": SettingSpec(
+        "cpmres", float, C.DEFAULT_CPM_RESOLUTION, C.CPM_RESOLUTION_MIN, C.CPM_RESOLUTION_MAX
     ),
 }
 
@@ -76,7 +84,9 @@ def load_permalink_settings():
     st.session_state["permalink_loaded"] = True
 
 
-def sync_query_params(n_points, k, spread, density_imbalance, bridge_strength, seed, shape, n_neighbors, resolution):
+def sync_query_params(
+    n_points, k, spread, density_imbalance, bridge_strength, seed, shape, n_neighbors, quality_function, resolution
+):
     try:
         st.query_params["n"] = str(int(n_points))
         st.query_params["k"] = str(int(k))
@@ -86,7 +96,11 @@ def sync_query_params(n_points, k, spread, density_imbalance, bridge_strength, s
         st.query_params["seed"] = str(int(seed))
         st.query_params["shape"] = shape
         st.query_params["nn"] = str(int(n_neighbors))
-        st.query_params["res"] = str(resolution)
+        st.query_params["qf"] = quality_function
+        if quality_function == "cpm":
+            st.query_params["cpmres"] = str(resolution)
+        else:
+            st.query_params["res"] = str(resolution)
     except Exception:
         pass
 
@@ -100,7 +114,11 @@ def apply_preset(name):
     st.session_state["bridge_strength_slider"] = p["bridge_strength"]
     st.session_state["shape_radio"] = p["shape"]
     st.session_state["n_neighbors_slider"] = p["n_neighbors"]
-    st.session_state["resolution_slider"] = p["resolution"]
+    st.session_state["quality_function_radio"] = p["quality_function"]
+    if p["quality_function"] == "cpm":
+        st.session_state["cpm_resolution_slider"] = p["resolution"]
+    else:
+        st.session_state["resolution_slider"] = p["resolution"]
     st.session_state["seed_input"] = p["seed"]
 
 

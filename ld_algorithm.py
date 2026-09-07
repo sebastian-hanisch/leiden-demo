@@ -1,9 +1,28 @@
 """Leiden-Algorithmus (Traag, Waltman & van Eck, 2019) from scratch:
 Ähnlichkeitsgraph (identischer Aufbau wie spectral-demo, frisch nachgebaut) →
 wiederholte Pässe aus lokalem Verschieben, Verfeinerung und Aggregation, bis die
-Modularität nicht mehr steigt. Bewusst ohne igraph/leidenalg zur Laufzeit implementiert.
-`leidenalg`/`python-igraph` dienen in tests/ nur als unabhängiger Kreuzvergleich,
-`networkx` nur für einen exakten Modularitäts-Formel-Kreuzvergleich."""
+Qualitätsfunktion nicht mehr steigt. Zwei austauschbare Qualitätsfunktionen, dieselbe
+Leiden-Maschinerie fuer beide:
+
+- **Modularität** (Standard, Newman 2004): vergleicht Kantendichte je Community gegen ein
+  Nullmodell, das von der GESAMTEN Graphgröße abhängt (k_i*k_j/2m) - das ist exakt die
+  Ursache des Auflösungslimits (Fortunato & Barthélemy, 2007), das diese Demo an anderer
+  Stelle zeigt: kleine, klar getrennte Communities werden verschmolzen, weil ihr Beitrag
+  zum globalen Nullmodell verschwindend klein ist, unabhängig davon, wie klar getrennt sie
+  tatsächlich sind.
+- **CPM** (Constant Potts Model, Traag, Van Dooren & Nesterov, 2011, "Narrow scope for
+  resolution-limit-free community detection", Physical Review E 84, 016114): vergleicht
+  Kantendichte je Community gegen einen FESTEN Schwellenwert `resolution` je Knotenpaar,
+  unabhängig von der Gesamtgraphgröße - dadurch nachweislich frei vom Auflösungslimit
+  (nicht nur gelindert wie bei Modularität mit hohem γ). Der Preis: `resolution` hat eine
+  völlig andere Skala als Modularitäts-γ (hier typischerweise 0.0-1.0 statt 0.3-4.0, siehe
+  ld_constants.py) und muss auf die Kantengewichts-Skala des Graphen abgestimmt werden -
+  kein Free Lunch, nur ein anderer Kompromiss.
+
+Bewusst ohne igraph/leidenalg zur Laufzeit implementiert. `leidenalg`/`python-igraph`
+dienen in tests/ nur als unabhängiger Kreuzvergleich (fuer BEIDE Qualitätsfunktionen,
+leidenalg unterstuetzt CPM nativ ueber `CPMVertexPartition`), `networkx` nur für einen
+exakten Modularitäts-Formel-Kreuzvergleich (networkx kennt kein CPM)."""
 
 from dataclasses import dataclass
 
@@ -14,7 +33,7 @@ import numpy as np
 class Pass:
     level: int  # 0-indexiert, ein Eintrag je vollstaendigem Verschieben+Verfeinern+Aggregieren-Pass
     partition: tuple  # Labels fuer ALLE urspruenglichen Punkte (0..k-1, fortlaufend), Stand nach diesem Pass
-    modularity: float  # Q_gamma des Gesamtgraphen bei dieser Partition
+    quality: float  # Wert der GEWAEHLTEN Qualitaetsfunktion (Modularitaet ODER CPM) bei dieser Partition
     n_communities: int
 
 
@@ -22,14 +41,15 @@ class Pass:
 class RunResult:
     passes: tuple  # chronologische Pass-Eintraege
     resolution: float
+    quality_function: str = "modularity"
 
     @property
     def final_labels(self):
         return self.passes[-1].partition
 
     @property
-    def final_modularity(self):
-        return self.passes[-1].modularity
+    def final_quality(self):
+        return self.passes[-1].quality
 
     @property
     def n_communities(self):
@@ -79,6 +99,39 @@ def modularity(adjacency, labels, resolution=1.0):
     return float(total / m2)
 
 
+def cpm_quality(adjacency, labels, resolution=1.0, node_weights=None):
+    """H_CPM = sum_c [e_c - gamma * n_c*(n_c-1)/2] (Traag, Van Dooren & Nesterov, 2011).
+    `e_c` ist die Summe der INTERNEN Kantengewichte einer Community (jede Kante einfach
+    gezaehlt), `n_c` ihre Knotenanzahl. Anders als bei Modularitaet skaliert der
+    Referenzwert NICHT mit der Gesamtgraphgroesse - das macht CPM nachweislich frei vom
+    Aufloesungslimit. `node_weights` (Standard: 1 je Knoten) erlaubt es, einen aggregierten
+    Knoten (der mehrere urspruengliche Punkte vertritt) korrekt mit seiner tatsaechlichen
+    Groesse statt mit 1 zu gewichten - siehe `aggregate_graph`."""
+    adjacency = np.asarray(adjacency, dtype=float)
+    labels = np.asarray(labels)
+    n = len(adjacency)
+    if node_weights is None:
+        node_weights = np.ones(n)
+    node_weights = np.asarray(node_weights, dtype=float)
+
+    total = 0.0
+    for c in set(labels.tolist()):
+        idx = np.where(labels == c)[0]
+        internal_weight = adjacency[np.ix_(idx, idx)].sum() / 2.0
+        nc = node_weights[idx].sum()
+        total += internal_weight - resolution * nc * (nc - 1) / 2.0
+    return float(total)
+
+
+def quality(adjacency, labels, resolution=1.0, quality_function="modularity"):
+    """Dispatcher: wertet die GEWAEHLTE Qualitaetsfunktion auf der Basis-Granularität
+    (urspruengliche Punkte, node_weights=1) aus - fuer die Zwischenzustaende waehrend
+    der Aggregation siehe die node_weights-Parameter von local_moving/refine direkt."""
+    if quality_function == "cpm":
+        return cpm_quality(adjacency, labels, resolution)
+    return modularity(adjacency, labels, resolution)
+
+
 def _relabel(labels):
     labels = np.asarray(labels)
     unique = sorted(set(labels.tolist()))
@@ -86,17 +139,27 @@ def _relabel(labels):
     return np.array([mapping[l] for l in labels])
 
 
-def local_moving(adjacency, resolution, rng, max_sweeps=100):
+def local_moving(adjacency, resolution, rng, quality_function="modularity", node_weights=None, max_sweeps=100):
     """Phase 1: ausgehend von Singleton-Communities verschiebt jeder Knoten sich gierig
-    in die Nachbar-Community mit dem groessten Modularitaetsgewinn
-    ($k_{i,\\text{in}}(C) - \\gamma \\cdot \\Sigma_{\\text{tot}}(C) \\cdot k_i / 2m$,
-    die Standard-Louvain-Gewinnformel), bis eine volle Runde ueber alle Knoten keine
-    Verschiebung mehr bringt."""
+    in die Nachbar-Community mit dem groessten Qualitaetsgewinn, bis eine volle Runde
+    ueber alle Knoten keine Verschiebung mehr bringt. Bei Modularitaet ist das die
+    Standard-Louvain-Gewinnformel
+    ($k_{i,\\text{in}}(C) - \\gamma \\cdot \\Sigma_{\\text{tot}}(C) \\cdot k_i / 2m$); bei
+    CPM die entsprechende Herleitung fuer H_CPM
+    ($w_{i,\\text{in}}(C) - \\gamma \\cdot n_C \\cdot s_i$, wobei $s_i$ die "Groesse" von
+    Knoten $i$ ist - 1 fuer einen urspruenglichen Punkt, sonst die Anzahl urspruenglicher
+    Punkte, die ein aggregierter Knoten vertritt: einen Knoten der Groesse $s_i$ in eine
+    Community der Groesse $n_C$ einzufuegen erhoeht die Paar-Strafe um
+    $\\binom{n_C+s_i}{2} - \\binom{n_C}{2} = n_C \\cdot s_i + \\binom{s_i}{2}$, wobei der
+    von $C$ unabhaengige zweite Term beim Vergleich der Communities herausfaellt)."""
     n = len(adjacency)
     degrees = adjacency.sum(axis=1)
     m2 = degrees.sum()
-    if m2 <= 0:
+    if quality_function != "cpm" and m2 <= 0:
         return np.arange(n)
+    if node_weights is None:
+        node_weights = np.ones(n)
+    node_weights = np.asarray(node_weights, dtype=float)
 
     neighbor_lists = []
     for i in range(n):
@@ -105,6 +168,12 @@ def local_moving(adjacency, resolution, rng, max_sweeps=100):
 
     community = np.arange(n)
     comm_degree_sum = degrees.copy()
+    comm_size = node_weights.copy()
+
+    def null_cost(c, i):
+        if quality_function == "cpm":
+            return resolution * comm_size[c] * node_weights[i]
+        return resolution * comm_degree_sum[c] * degrees[i] / m2
 
     order = list(range(n))
     for _sweep in range(max_sweeps):
@@ -113,6 +182,7 @@ def local_moving(adjacency, resolution, rng, max_sweeps=100):
         for i in order:
             current_comm = community[i]
             comm_degree_sum[current_comm] -= degrees[i]
+            comm_size[current_comm] -= node_weights[i]
 
             neighbor_weights = {}
             for j, w in neighbor_lists[i]:
@@ -120,15 +190,16 @@ def local_moving(adjacency, resolution, rng, max_sweeps=100):
                 neighbor_weights[c] = neighbor_weights.get(c, 0.0) + w
 
             best_comm = current_comm
-            best_gain = neighbor_weights.get(current_comm, 0.0) - resolution * comm_degree_sum[current_comm] * degrees[i] / m2
+            best_gain = neighbor_weights.get(current_comm, 0.0) - null_cost(current_comm, i)
 
             for c, w_ic in neighbor_weights.items():
-                gain = w_ic - resolution * comm_degree_sum[c] * degrees[i] / m2
+                gain = w_ic - null_cost(c, i)
                 if gain > best_gain + 1e-12:
                     best_gain = gain
                     best_comm = c
 
             comm_degree_sum[best_comm] += degrees[i]
+            comm_size[best_comm] += node_weights[i]
             if best_comm != current_comm:
                 community[i] = best_comm
                 improved = True
@@ -138,14 +209,14 @@ def local_moving(adjacency, resolution, rng, max_sweeps=100):
     return community
 
 
-def refine(adjacency, local_labels, resolution, rng):
+def refine(adjacency, local_labels, resolution, rng, quality_function="modularity", node_weights=None):
     """Phase 2 (der entscheidende Unterschied zu Louvain): innerhalb jeder in Phase 1
     gefundenen Community wird - ausgehend von Singletons, aber mit der GLEICHEN
-    global normalisierten Modularitaets-Gewinnformel wie Phase 1 (nicht neu abgeleitet
-    aus dem isolierten Teilgraphen - das wuerde durch eine ganz andere Nullmodell-
-    Normierung systematisch zu viel aufsplitten) - erneut lokal verschoben, aber nur
-    zwischen Kandidaten INNERHALB derselben Phase-1-Community. Da dabei ausschliesslich
-    ueber tatsaechlich vorhandene Kanten gemergt wird, ist jede entstehende verfeinerte
+    global normalisierten Gewinnformel wie Phase 1 (nicht neu abgeleitet aus dem
+    isolierten Teilgraphen - das wuerde durch eine ganz andere Nullmodell-Normierung
+    systematisch zu viel aufsplitten) - erneut lokal verschoben, aber nur zwischen
+    Kandidaten INNERHALB derselben Phase-1-Community. Da dabei ausschliesslich ueber
+    tatsaechlich vorhandene Kanten gemergt wird, ist jede entstehende verfeinerte
     Community GARANTIERT zusammenhaengend (jeder Knoten ist ueber eine Kette von
     Kanten-Merges mit jedem anderen Knoten seiner Community verbunden) - das behebt
     Louvains bekannten Fehler, nach Aggregation eine nicht-zusammenhaengende Community
@@ -155,11 +226,20 @@ def refine(adjacency, local_labels, resolution, rng):
     n = len(adjacency)
     degrees = adjacency.sum(axis=1)
     m2 = degrees.sum()
-    if m2 <= 0:
+    if quality_function != "cpm" and m2 <= 0:
         return np.arange(n)
+    if node_weights is None:
+        node_weights = np.ones(n)
+    node_weights = np.asarray(node_weights, dtype=float)
 
     refined = np.arange(n)
     comm_degree_sum = degrees.copy()
+    comm_size = node_weights.copy()
+
+    def null_cost(c, i):
+        if quality_function == "cpm":
+            return resolution * comm_size[c] * node_weights[i]
+        return resolution * comm_degree_sum[c] * degrees[i] / m2
 
     for comm in sorted(set(local_labels.tolist())):
         idx = np.where(local_labels == comm)[0]
@@ -175,6 +255,7 @@ def refine(adjacency, local_labels, resolution, rng):
             for i in order:
                 current = refined[i]
                 comm_degree_sum[current] -= degrees[i]
+                comm_size[current] -= node_weights[i]
 
                 neighbor_weights = {}
                 for j in np.nonzero(adjacency[i])[0]:
@@ -184,14 +265,15 @@ def refine(adjacency, local_labels, resolution, rng):
                         neighbor_weights[c] = neighbor_weights.get(c, 0.0) + adjacency[i, j]
 
                 best = current
-                best_gain = neighbor_weights.get(current, 0.0) - resolution * comm_degree_sum[current] * degrees[i] / m2
+                best_gain = neighbor_weights.get(current, 0.0) - null_cost(current, i)
                 for c, w in neighbor_weights.items():
-                    gain = w - resolution * comm_degree_sum[c] * degrees[i] / m2
+                    gain = w - null_cost(c, i)
                     if gain > best_gain + 1e-12:
                         best_gain = gain
                         best = c
 
                 comm_degree_sum[best] += degrees[i]
+                comm_size[best] += node_weights[i]
                 if best != current:
                     refined[i] = best
                     improved = True
@@ -201,21 +283,31 @@ def refine(adjacency, local_labels, resolution, rng):
     return refined
 
 
-def aggregate_graph(adjacency, labels):
+def aggregate_graph(adjacency, labels, node_weights=None):
     """Phase 3: baut den reduzierten Graphen - ein Knoten je Community, Kantengewicht =
     Summe der Inter-Community-Gewichte (Selbstschleifen = doppelte interne Kantensumme,
-    konsistent mit der ueber ALLE (i,j)-Paare summierenden Modularitaetsformel)."""
+    konsistent mit der ueber ALLE (i,j)-Paare summierenden Modularitaetsformel). Gibt
+    zusaetzlich die aggregierten `node_weights` zurueck (Summe je Community) - fuer
+    Modularitaet ungenutzt (die aggregiert bereits korrekt ueber die Kantengewichte
+    selbst), aber fuer CPM ZWINGEND: ohne sie wuerde jeder aggregierte Knoten faelschlich
+    wieder mit Groesse 1 in die naechste Ebene starten, statt mit der tatsaechlichen
+    Anzahl urspruenglicher Punkte, die er vertritt."""
     labels = _relabel(labels)
     m = int(labels.max()) + 1
     new_adjacency = np.zeros((m, m))
     n = len(adjacency)
+    if node_weights is None:
+        node_weights = np.ones(n)
+    node_weights = np.asarray(node_weights, dtype=float)
+    new_node_weights = np.zeros(m)
     for i in range(n):
         ci = labels[i]
+        new_node_weights[ci] += node_weights[i]
         row = adjacency[i]
         nz = np.nonzero(row)[0]
         for j in nz:
             new_adjacency[ci, labels[j]] += row[j]
-    return new_adjacency, labels
+    return new_adjacency, labels, new_node_weights
 
 
 def community_is_connected(adjacency, indices):
@@ -238,21 +330,30 @@ def community_is_connected(adjacency, indices):
     return visited == idx_set
 
 
-def _run_passes(base_adjacency, resolution, seed, use_refinement, max_levels=20):
+def _run_passes(base_adjacency, resolution, seed, use_refinement, quality_function="modularity", max_levels=20):
     n = len(base_adjacency)
     rng = np.random.default_rng(seed)
 
     current_membership = np.arange(n)
     current_adjacency = base_adjacency.copy()
+    current_node_weights = np.ones(n)
     passes = []
 
     for level in range(max_levels):
-        local_labels = local_moving(current_adjacency, resolution, rng)
-        working_labels = refine(current_adjacency, local_labels, resolution, rng) if use_refinement else local_labels
+        local_labels = local_moving(
+            current_adjacency, resolution, rng, quality_function=quality_function, node_weights=current_node_weights
+        )
+        working_labels = (
+            refine(
+                current_adjacency, local_labels, resolution, rng,
+                quality_function=quality_function, node_weights=current_node_weights,
+            )
+            if use_refinement else local_labels
+        )
         working_labels = _relabel(working_labels)
 
         new_membership = _relabel(working_labels[current_membership])
-        q = modularity(base_adjacency, new_membership, resolution)
+        q = quality(base_adjacency, new_membership, resolution, quality_function)
         passes.append(
             Pass(level, tuple(int(x) for x in new_membership), q, int(new_membership.max()) + 1)
         )
@@ -261,7 +362,9 @@ def _run_passes(base_adjacency, resolution, seed, use_refinement, max_levels=20)
         if n_communities_this_level == len(current_adjacency):
             break
 
-        current_adjacency, _ = aggregate_graph(current_adjacency, working_labels)
+        current_adjacency, _, current_node_weights = aggregate_graph(
+            current_adjacency, working_labels, current_node_weights
+        )
         current_membership = new_membership
         if len(current_adjacency) == 1:
             break
@@ -269,23 +372,29 @@ def _run_passes(base_adjacency, resolution, seed, use_refinement, max_levels=20)
     return tuple(passes)
 
 
-def run(data, n_neighbors, resolution, seed, max_levels=20):
+def run(data, n_neighbors, resolution, seed, quality_function="modularity", max_levels=20):
     """Fuehrt den vollstaendigen Leiden-Algorithmus (mit Verfeinerung) auf dem aus den
     Rohdaten gebauten Aehnlichkeitsgraphen aus - Pass fuer Pass protokolliert, damit die
     App den Fortschritt Level fuer Level durchblaettern kann. Braucht anders als
-    spectral-demo/k-Means/GMM/... KEINE Ziel-Clusteranzahl irgendwo."""
+    spectral-demo/k-Means/GMM/... KEINE Ziel-Clusteranzahl irgendwo. `quality_function`
+    waehlt zwischen "modularity" (Standard) und "cpm" (Constant Potts Model, siehe
+    Modul-Docstring) - dieselbe Maschinerie optimiert in beiden Faellen."""
     data = np.asarray(data, dtype=float)
     base_adjacency = build_similarity_graph(data, n_neighbors)
-    passes = _run_passes(base_adjacency, resolution, seed, use_refinement=True, max_levels=max_levels)
-    return RunResult(passes=passes, resolution=resolution)
+    passes = _run_passes(
+        base_adjacency, resolution, seed, use_refinement=True, quality_function=quality_function, max_levels=max_levels
+    )
+    return RunResult(passes=passes, resolution=resolution, quality_function=quality_function)
 
 
-def run_local_moving_only(data, n_neighbors, resolution, seed, max_levels=20):
+def run_local_moving_only(data, n_neighbors, resolution, seed, quality_function="modularity", max_levels=20):
     """Testeigene Ablation: lokales Verschieben OHNE Verfeinerung (Louvains Verhalten
     nachgebaut) - ausschliesslich als Kontrastfolie in tests/ (zeigt, dass die
     Verfeinerung nicht Teil des noetigen Minimalpfads ist, sondern eine bewusste
     Zusatzgarantie), kein Teil des in der App gezeigten Algorithmus."""
     data = np.asarray(data, dtype=float)
     base_adjacency = build_similarity_graph(data, n_neighbors)
-    passes = _run_passes(base_adjacency, resolution, seed, use_refinement=False, max_levels=max_levels)
-    return RunResult(passes=passes, resolution=resolution)
+    passes = _run_passes(
+        base_adjacency, resolution, seed, use_refinement=False, quality_function=quality_function, max_levels=max_levels
+    )
+    return RunResult(passes=passes, resolution=resolution, quality_function=quality_function)

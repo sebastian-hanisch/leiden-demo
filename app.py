@@ -40,17 +40,17 @@ st.set_page_config(page_title="Leiden-Algorithmus – Sebastian Hanisch", layout
 
 
 @st.cache_data(show_spinner=False)
-def _compute_run(n_points, k, spread, density_imbalance, bridge_strength, shape, n_neighbors, resolution, seed):
+def _compute_run(n_points, k, spread, density_imbalance, bridge_strength, shape, n_neighbors, quality_function, resolution, seed):
     instance = generate_instance(
         n_points, k, spread, shape, seed, density_imbalance=density_imbalance, bridge_strength=bridge_strength
     )
-    result = run(instance.as_array(), n_neighbors, resolution, seed)
+    result = run(instance.as_array(), n_neighbors, resolution, seed, quality_function=quality_function)
     return instance, result
 
 
 @st.cache_data(show_spinner=False)
-def _compute_mini_run(instance, n_neighbors, resolution, seed):
-    return run(instance.as_array(), n_neighbors, resolution, seed)
+def _compute_mini_run(instance, n_neighbors, quality_function, resolution, seed):
+    return run(instance.as_array(), n_neighbors, resolution, seed, quality_function=quality_function)
 
 
 @st.cache_data(show_spinner=False)
@@ -83,11 +83,11 @@ with st.expander("So funktioniert der Leiden-Algorithmus", expanded=True):
     st.markdown(
         """
 Auf demselben Ähnlichkeitsgraphen wie spectral-demo (k-nächste-Nachbarn, Gauß-Kernel-
-Gewichte) wiederholt der Algorithmus einen Pass aus drei Phasen, bis die Modularität
-nicht mehr steigt:
+Gewichte) wiederholt der Algorithmus einen Pass aus drei Phasen, bis die
+**Qualitätsfunktion** nicht mehr steigt:
 
 - **Lokales Verschieben**: ausgehend von Singleton-Communities verschiebt sich jeder
-  Knoten gierig in die Nachbar-Community mit dem größten Modularitätsgewinn.
+  Knoten gierig in die Nachbar-Community mit dem größten Qualitätsgewinn.
 - **Verfeinerung**: innerhalb jeder so gefundenen Community wird erneut lokal verschoben,
   aber beschränkt auf tatsächlich vorhandene Kanten - das garantiert, dass jede
   zurückgegebene Community **zusammenhängend** bleibt (der ältere Louvain-Algorithmus
@@ -95,8 +95,20 @@ nicht mehr steigt:
 - **Aggregation**: die gefundenen Communities werden zu einem neuen, kleineren Graphen
   zusammengefasst, und der ganze Pass beginnt von vorn.
 
-Ein **Auflösungsparameter** γ steuert dabei, wie leicht eine Trennung "lohnt" - der eine
-method-eigene Regler dieser Demo.
+Welche **Qualitätsfunktion** optimiert wird, ist selbst eine Wahl (Seitenleiste,
+„Qualitätsfunktion“):
+
+- **Modularität** (Standard, Newman 2004): vergleicht die Kantendichte je Community
+  gegen ein Nullmodell, das von der GESAMTEN Graphgröße abhängt. Ein
+  **Auflösungsparameter** γ steuert dabei, wie leicht eine Trennung "lohnt" - höher hilft
+  gegen das weiter unten erklärte Auflösungslimit, behebt es aber nicht grundsätzlich.
+- **CPM** (Constant Potts Model, Traag, Van Dooren & Nesterov, 2011, *"Narrow scope for
+  resolution-limit-free community detection"*, Physical Review E 84, 016114): vergleicht
+  die Kantendichte stattdessen gegen einen FESTEN Schwellenwert - unabhängig von der
+  Graphgröße. Dieselbe Leiden-Maschinerie optimiert beide Qualitätsfunktionen; nur die
+  Bewertung eines Verschiebe-Vorschlags ändert sich. Details, Herleitung und ein Beweis,
+  dass CPM das Auflösungslimit tatsächlich behebt (nicht nur lindert), im Abschnitt
+  "📐 Mathematische Formulierung" unten.
         """
     )
 
@@ -107,6 +119,7 @@ PRESET_HELP = {
     "Auflösungsgrenze": "Viele kleine, eng gepackte Gruppen - Standard-Modularität (γ=1) verschmilzt einige davon trotz klarer Trennung.",
     "Auflösungsparameter als Kompromiss": "Dieselbe Szenerie mit höherem γ - hilft, behebt das Auflösungslimit aber nicht vollständig.",
     "Kombinierter Härtefall (Dichte + Brücke)": "Dieselben zwei Härtefälle, an denen DBSCAN bzw. Single-Linkage-Chaining scheitern - Leiden übersteht beide deutlich besser (Rand-Index meist >0.95), ist aber nicht perfekt immun: die Brückenpunkte selbst bilden gelegentlich eine eigene kleine Community, statt zwei echte Gruppen fälschlich zu verschmelzen.",
+    "Auflösungslimit richtig behoben (CPM)": "Exakt dasselbe Szenario wie 'Auflösungsgrenze', aber mit CPM statt Modularität als Qualitätsfunktion - findet die wahren 20 Gruppen fast exakt, was Modularität bei KEINEM Auflösungsparameter γ schafft.",
 }
 preset_cols = st.columns(len(C.PRESETS))
 for i, name in enumerate(C.PRESETS.keys()):
@@ -156,12 +169,31 @@ with st.sidebar:
     )
 
     st.markdown("**Leiden-Parameter**")
-    resolution = st.slider(
-        "Auflösungsparameter γ", *bounds("resolution_slider"), key="resolution_slider", step=0.1,
-        help="1.0 = klassische Modularität. Höher = mehr, kleinere Communities werden "
-        "bevorzugt - kann das Auflösungslimit lindern, aber um den Preis, andernorts zu "
-        "übersplitten.",
+    quality_function = st.radio(
+        "Qualitätsfunktion", options=C.QUALITY_FUNCTIONS, key="quality_function_radio",
+        format_func=lambda q: C.QUALITY_FUNCTION_LABELS[q],
+        help="Modularität (Standard) hat ein bekanntes Auflösungslimit (siehe unten). "
+        "CPM (Traag, Van Dooren & Nesterov, 2011) behebt es strukturell, braucht dafür "
+        "aber einen Auflösungsparameter auf einer VÖLLIG anderen Skala (0.0-1.0 statt "
+        "0.3-4.0) - deshalb ein eigener Regler unten.",
     )
+    if quality_function == "cpm":
+        resolution = st.slider(
+            "Auflösungsparameter γ (CPM-Skala)", *bounds("cpm_resolution_slider"),
+            key="cpm_resolution_slider", step=0.005, format="%.3f",
+            help="Wird direkt gegen Kantengewichte verglichen (hier 0-1, Gauß-Kernel), "
+            "nicht gegen ein graphgrößen-abhängiges Nullmodell wie bei Modularität - "
+            "deshalb eine ganz andere Skala. ~0.0005-0.004 verhält sich meist wie "
+            "Modularitäts-γ=1.0. Ab ~0.5 löst CPM sogar das Auflösungslimit-Szenario "
+            "korrekt auf (siehe Preset).",
+        )
+    else:
+        resolution = st.slider(
+            "Auflösungsparameter γ", *bounds("resolution_slider"), key="resolution_slider", step=0.1,
+            help="1.0 = klassische Modularität. Höher = mehr, kleinere Communities werden "
+            "bevorzugt - kann das Auflösungslimit lindern, aber um den Preis, andernorts zu "
+            "übersplitten.",
+        )
 
     st.button(
         "🎲 Neue Punktwolke generieren",
@@ -170,16 +202,20 @@ with st.sidebar:
         help="Würfelt einen neuen Zufalls-Seed für die Standorte.",
     )
 
-sync_query_params(n_points, k, spread, density_imbalance, bridge_strength, seed, shape, n_neighbors, resolution)
+sync_query_params(
+    n_points, k, spread, density_imbalance, bridge_strength, seed, shape, n_neighbors, quality_function, resolution
+)
 
 with st.spinner("Führe den Leiden-Algorithmus aus..."):
     instance, result = _compute_run(
         int(n_points), int(k), spread, density_imbalance, bridge_strength, shape,
-        int(n_neighbors), resolution, int(seed)
+        int(n_neighbors), quality_function, resolution, int(seed)
     )
 
 max_step = len(result.passes) - 1
-run_key = (n_points, k, spread, density_imbalance, bridge_strength, shape, n_neighbors, resolution, seed)
+run_key = (
+    n_points, k, spread, density_imbalance, bridge_strength, shape, n_neighbors, quality_function, resolution, seed
+)
 if "ld_step" not in st.session_state or st.session_state.get("ld_step_owner") != run_key:
     st.session_state["ld_step"] = max_step
     st.session_state["ld_step_owner"] = run_key
@@ -209,20 +245,24 @@ scatter_col.plotly_chart(
     width="stretch", key=f"scatter_{step}",
 )
 
+quality_label = "Modularität Q" if quality_function == "modularity" else "CPM-Wert H"
 lm1, lm2, lm3 = st.columns(3)
 lm1.metric("Pässe bisher", f"{step + 1}/{max_step + 1}")
 lm2.metric("Gefundene Gruppenanzahl", current_pass.n_communities)
-lm3.metric("Modularität Q", f"{current_pass.modularity:.4f}")
+lm3.metric(quality_label, f"{current_pass.quality:.4f}")
 
-st.plotly_chart(build_modularity_curve_figure(result.passes[: step + 1]), width="stretch", key="q_curve")
+st.plotly_chart(
+    build_modularity_curve_figure(result.passes[: step + 1], y_label=quality_label),
+    width="stretch", key="q_curve",
+)
 
 st.markdown("**Und mit anderem Auflösungsparameter?**")
 st.caption("Gleiche Standorte wie oben - nur γ unterscheidet sich.")
-example_resolutions = [0.5, 1.0, 2.0, 3.5]
+example_resolutions = [0.5, 1.0, 2.0, 3.5] if quality_function == "modularity" else [0.0005, 0.002, 0.02, 0.2]
 example_cols = st.columns(len(example_resolutions))
 for col, example_res in zip(example_cols, example_resolutions):
     with col:
-        example_result = _compute_mini_run(instance, int(n_neighbors), example_res, int(seed))
+        example_result = _compute_mini_run(instance, int(n_neighbors), quality_function, example_res, int(seed))
         st.plotly_chart(
             build_mini_scatter_figure(instance.as_array(), example_result.final_labels),
             width="stretch", key=f"mini_{example_res}",
@@ -256,14 +296,22 @@ if gap_from_true == 0:
         f"{leiden_score:.2f} - ganz ohne dass irgendwo ein k eingestellt wurde. Jede "
         f"k-Means-artige Methode bräuchte genau diese Zahl vorab."
     )
-elif gap_from_true < 0:
+elif gap_from_true < 0 and quality_function == "modularity":
     st.warning(
         f"⚠️ Das Auflösungslimit der Modularität in Aktion: Leiden findet hier "
         f"{result.n_communities} Gruppen statt der wahren {true_k} - viele kleine, klar "
         f"getrennte Gruppen werden trotz objektiv klarer Trennung verschmolzen, weil sie "
         f"klein relativ zur Gesamtgraphgröße sind. 'Kein k nötig' ist kein Free Lunch: "
         f"probieren Sie einen höheren Auflösungsparameter γ in der Seitenleiste - er "
-        f"hilft, behebt das Limit aber nicht vollständig."
+        f"hilft, behebt das Limit aber nicht vollständig. Oder wechseln Sie oben auf CPM "
+        f"als Qualitätsfunktion - das behebt es strukturell (siehe 'So funktioniert')."
+    )
+elif gap_from_true < 0:
+    st.warning(
+        f"⚠️ Leiden findet hier {result.n_communities} Gruppen statt der wahren {true_k} "
+        f"- CPM hat kein Auflösungslimit wie Modularität, aber der Auflösungsparameter γ "
+        f"ist hier noch zu niedrig für die tatsächliche Gruppengröße dieses Szenarios: "
+        f"erhöhen Sie ihn in der Seitenleiste (CPM-Skala, typischerweise 0.0-1.0)."
     )
 else:
     st.warning(
@@ -306,14 +354,49 @@ angehören.
 Communities, die kleiner als $\mathcal{O}(\sqrt{2m})$ relativ zum Gesamtgraphen sind,
 prinzipiell nicht zuverlässig auflösen - selbst bei objektiv perfekter Trennung kann das
 Verschmelzen zweier solcher Gruppen die Modularität erhöhen. Ein höheres $\gamma$
-verschiebt diese Grenze, hebt sie aber nicht auf.
+verschiebt diese Grenze, hebt sie aber nicht auf: der Nullmodell-Term
+$\gamma \cdot k_i k_j / 2m$ hängt über $m$ (die Gesamtkantengewichtsumme) IMMER von der
+gesamten Graphgröße ab, egal welchen Wert $\gamma$ annimmt - das ist strukturell, keine
+Frage der richtigen Regler-Einstellung.
 
-**Ehrlicher Kompromiss**: kein Ziel-k mehr nötig (anders als bei jeder k-Means-artigen
-Demo dieser Reihe), aber der Auflösungsparameter γ ist ein neuer freier Parameter mit
-eigener, gut dokumentierter Schwäche.
+**CPM - Constant Potts Model** (Traag, Van Dooren & Nesterov, 2011, *"Narrow scope for
+resolution-limit-free community detection"*, Physical Review E 84, 016114) ersetzt das
+graphgrößen-abhängige Nullmodell durch einen FESTEN Schwellenwert pro Knotenpaar:
 
-Implementiert in `ld_algorithm.py` (Leiden, Modularität) und `ld_evaluation.py`
-(Rand-Index, k-Means-Referenz).
+$$
+H_{\text{CPM}} = \sum_C \left[e_C - \gamma \binom{n_C}{2}\right]
+= \sum_C \left[e_C - \gamma \frac{n_C(n_C-1)}{2}\right]
+$$
+
+wobei $e_C$ die Summe der internen Kantengewichte einer Community $C$ und $n_C$ ihre
+Knotenanzahl ist. Der entscheidende Unterschied zu Modularität: $\gamma$ wird direkt
+gegen Kantengewichte verglichen, **ohne** dass $m$ oder die Graphgröße irgendwo
+auftaucht - eine kleine, aber dichte Community lohnt sich bei CPM unabhängig davon, wie
+groß der Rest des Graphen ist. Traag et al. (2011) beweisen formal, dass CPM dadurch
+**keine** Aufl.-limit-Pathologie besitzt (Theorem 3 im Paper): für jede Partition, in der
+zwei tatsächlich dicht verbundene Communities getrennt bleiben sollten, existiert ein
+$\gamma$, das genau das liefert - unabhängig von der Gesamtgraphgröße. Das
+Auflösungsgrenze-Preset dieser Demo zeigt das konkret: CPM mit $\gamma=0.5$ findet die
+wahren 20 Gruppen fast exakt (Rand-Index ≈0.98), was Modularität bei KEINEM getesteten
+$\gamma \in [0.3, 4.0]$ schafft.
+
+Dieselbe lokale Verschiebe-/Verfeinerungs-/Aggregations-Maschinerie optimiert beide
+Qualitätsfunktionen - nur die Gewinnformel ändert sich: bei CPM lohnt sich das Verschieben
+eines (ggf. aggregierten, $s_i$ urspüngliche Punkte vertretenden) Knotens $i$ in Community
+$C$ (Größe $n_C$), wenn $w_{i,\text{in}}(C) - \gamma \cdot n_C \cdot s_i$ maximal ist -
+das Analogon zu Modularitäts-Gewinnformel oben, nur mit $n_C \cdot s_i$ statt
+$\Sigma_{\text{tot}}(C) \cdot k_i / 2m$ als Nullmodell-Kostenterm.
+
+**Ehrlicher Kompromiss**: CPM behebt das Auflösungslimit strukturell, nicht nur
+graduell - aber sein $\gamma$ hat eine völlig andere, graphabhängige Skala (hier
+typischerweise 0.0-1.0 statt Modularitäts 0.3-4.0, siehe eigener Regler oben) und muss
+auf die konkrete Kantengewichts-Verteilung abgestimmt werden. Kein Ziel-k mehr nötig
+(anders als bei jeder k-Means-artigen Demo dieser Reihe), aber IMMER ein freier
+Auflösungsparameter mit eigener Schwäche - bei Modularität eine strukturelle, bei CPM nur
+eine Kalibrierungsfrage.
+
+Implementiert in `ld_algorithm.py` (Leiden-Maschinerie, `modularity`, `cpm_quality`) und
+`ld_evaluation.py` (Rand-Index, k-Means-Referenz).
         """
     )
 

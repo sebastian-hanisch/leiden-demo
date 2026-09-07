@@ -114,21 +114,21 @@ def build_graph_figure(data, adjacency, labels):
     return fig
 
 
-def build_modularity_curve_figure(passes):
-    """Modularität gegen Pass-Nummer - beweisbar monoton steigend (jede Phase kann Q nur
-    erhoehen oder gleich lassen), Analogon zu divisive-demos SSE-Kurve, nur in die
-    andere Richtung."""
+def build_modularity_curve_figure(passes, y_label="Modularität Q"):
+    """Qualitaetsfunktion (Modularitaet ODER CPM, je nach `y_label`) gegen Pass-Nummer -
+    beweisbar monoton steigend (jede Phase kann Q nur erhoehen oder gleich lassen),
+    Analogon zu divisive-demos SSE-Kurve, nur in die andere Richtung."""
     import plotly.graph_objects as go
 
     levels = [p.level for p in passes]
-    values = [p.modularity for p in passes]
+    values = [p.quality for p in passes]
     fig = go.Figure(
         go.Scatter(x=levels, y=values, mode="lines+markers", line=dict(color="#1f77b4"))
     )
     fig.update_layout(
         template="plotly_white", height=260,
         xaxis=dict(title="Pass (Level)", fixedrange=True, dtick=1),
-        yaxis=dict(title="Modularität Q", fixedrange=True),
+        yaxis=dict(title=y_label, fixedrange=True),
         margin=dict(t=20, l=10, r=10, b=10), showlegend=False,
     )
     return fig
