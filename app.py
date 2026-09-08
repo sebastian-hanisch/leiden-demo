@@ -189,7 +189,7 @@ with st.sidebar:
     if quality_function == "cpm":
         resolution = st.slider(
             "Auflösungsparameter γ (CPM-Skala)", *bounds("cpm_resolution_slider"),
-            key="cpm_resolution_slider", step=0.005, format="%.3f",
+            key="cpm_resolution_slider", step=0.0005, format="%.4f",
             help="Wird direkt gegen Kantengewichte verglichen (hier 0-1, Gauß-Kernel), "
             "nicht gegen ein graphgrößen-abhängiges Nullmodell wie bei Modularität - "
             "deshalb eine ganz andere Skala. ~0.0005-0.004 verhält sich meist wie "

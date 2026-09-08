@@ -150,6 +150,34 @@ def test_cpm_preset_solves_the_resolution_limit_that_modularity_could_not():
     assert cpm_ri > 0.95
 
 
+def test_default_cpm_resolution_is_unbiased_across_scenarios():
+    """Regressionstest fuer den empirisch bestimmten Standardwert DEFAULT_CPM_RESOLUTION
+    (siehe ld_constants.py-Kommentar und [[project_leiden_demo_venv]]): ueber eine kleine,
+    aber diverse Stichprobe an Szenarien (n_points/spread/n_neighbors/k variiert) darf
+    found_k im Mittel NICHT systematisch von true_k abweichen - der Standardwert soll
+    weder strukturell ueber- noch unterclustern. Der vorherige Standardwert 0.002 hätte
+    diesen Test nicht bestanden (mean_bias +0.16 im vollen 1500-Szenario-Sweep, der diesen
+    Test motiviert hat)."""
+    scenarios = [
+        (n_points, k, spread, n_neighbors, seed)
+        for n_points in (90, 150, 200)
+        for spread in (0.1, 0.15, 0.2)
+        for n_neighbors in (6, 10)
+        for k in (3, 4, 5)
+        for seed in (1, 2)
+    ]
+    diffs = []
+    for n_points, k, spread, n_neighbors, seed in scenarios:
+        instance = generate_instance(n_points=n_points, k=k, spread=spread, shape="blobs", seed=seed)
+        result = run(
+            instance.as_array(), n_neighbors, C.DEFAULT_CPM_RESOLUTION, seed, quality_function="cpm"
+        )
+        diffs.append(result.n_communities - k)
+
+    mean_bias = sum(diffs) / len(diffs)
+    assert abs(mean_bias) < 0.15, f"DEFAULT_CPM_RESOLUTION is biased: mean(found_k - true_k) = {mean_bias:+.3f}"
+
+
 def test_consensus_preset_genuinely_shows_seed_sensitivity_and_consensus_fixes_it():
     """Kern-Nachweis fuer das Preset 'Ergebnis haengt vom Zufall ab (Konsensus hilft)':
     ein einzelner Lauf muss tatsaechlich seed-abhaengig sein (sonst waere Konsensus-

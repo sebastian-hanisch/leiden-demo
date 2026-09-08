@@ -131,6 +131,11 @@ darf bis knapp an `N_POINTS_MAX-1` heranreichen (ein vollständiger Graph) - die
 - **Alle sieben Presets direkt gegen das tatsächliche App-Verhalten getestet** (Szenario-
   Seed = Algorithmus-Seed, wie `app.py` es macht - etabliertes Muster aus
   dpmm-/spectral-/divisive-demo).
+- **`DEFAULT_CPM_RESOLUTION` empirisch statt an einem einzigen Szenario kalibriert**:
+  über 1500 Szenarien hinweg (n_points/spread/n_neighbors/k/seed variiert) hatte der
+  ursprüngliche Standardwert 0.002 eine spürbare Überclustern-Verzerrung
+  (mean(found_k − true_k) = +0.16); 0.001 ist über denselben Sweep nahezu unverzerrt
+  (+0.03) bei gleichzeitig höherer Exact-Match-Rate - mit Regressionstest abgesichert.
 - **Konsensus-Clustering eigens getestet**: Reproduzierbarkeit bei gleichem Seed,
   tatsächliche Konvergenz (scharfe Konsensus-Matrix) innerhalb der Sicherheitsgrenze,
   Funktionieren mit beiden Qualitätsfunktionen, sowie ein Preset-Nachweis, dass das

@@ -11,7 +11,14 @@ DEFAULT_SHAPE = "blobs"
 DEFAULT_N_NEIGHBORS = 8
 DEFAULT_QUALITY_FUNCTION = "modularity"
 DEFAULT_RESOLUTION = 1.0
-DEFAULT_CPM_RESOLUTION = 0.002
+# Empirisch bestimmt (1500 Szenarien, n_points/spread/n_neighbors/k/seed variiert, nicht
+# nur der eine Standard-Szenario-Fall) als der Wert mit dem am wenigsten VERZERRTEN
+# found_k-gegenueber-true_k-Fehler (mean_bias nahe 0: weder systematisches Ueber- noch
+# Unterclustern) UND der hoechsten Exact-Match-Rate in diesem Bereich - siehe
+# [[project_leiden_demo_venv]]. Der vorherige Standardwert 0.002 war nur gegen EIN
+# Szenario (die "Modularitaet bei gamma=1.0"-Optik) abgeglichen und erwies sich im
+# breiten Sweep als spuerbar Ueberclustern-verzerrt (mean_bias +0.16 statt -0.03 bei 0.001).
+DEFAULT_CPM_RESOLUTION = 0.001
 
 N_POINTS_MIN, N_POINTS_MAX = 30, 300
 K_MIN, K_MAX = 2, 20
