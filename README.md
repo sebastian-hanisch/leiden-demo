@@ -136,6 +136,14 @@ darf bis knapp an `N_POINTS_MAX-1` heranreichen (ein vollständiger Graph) - die
   ursprüngliche Standardwert 0.002 eine spürbare Überclustern-Verzerrung
   (mean(found_k − true_k) = +0.16); 0.001 ist über denselben Sweep nahezu unverzerrt
   (+0.03) bei gleichzeitig höherer Exact-Match-Rate - mit Regressionstest abgesichert.
+- **CPM-Auflösungsregler logarithmisch, nicht linear**: der nützliche Bereich (~0.0005
+  bis ~0.6) überspannt gut 3 Größenordnungen - auf einem linearen 0-1-Regler säße jeder
+  sinnvolle Standardwert am äußersten Rand. Der Regler selbst verwaltet nur seine
+  Log-Position in einem eigenen Session-State-Schlüssel; ein echter Bug dabei (dieser
+  Schlüssel verschwand beim kurzzeitigen Umschalten auf Modularität, wodurch γ beim
+  Zurückschalten stillschweigend auf den Regler-Boden zurückfiel statt den zuletzt
+  gesetzten Wert zu behalten) wurde per AppTest reproduziert, gefixt und mit
+  Regressionstest abgesichert.
 - **Konsensus-Clustering eigens getestet**: Reproduzierbarkeit bei gleichem Seed,
   tatsächliche Konvergenz (scharfe Konsensus-Matrix) innerhalb der Sicherheitsgrenze,
   Funktionieren mit beiden Qualitätsfunktionen, sowie ein Preset-Nachweis, dass das

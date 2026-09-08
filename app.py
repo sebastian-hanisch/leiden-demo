@@ -14,6 +14,8 @@ Nichtparametrik): gieriges lokales Verschieben + zusammenhangsgarantierende Verf
 Lauffähig mit: streamlit run app.py
 """
 
+import math
+
 import streamlit as st
 
 import ld_constants as C
@@ -187,15 +189,41 @@ with st.sidebar:
         "0.3-4.0) - deshalb ein eigener Regler unten.",
     )
     if quality_function == "cpm":
-        resolution = st.slider(
-            "Auflösungsparameter γ (CPM-Skala)", *bounds("cpm_resolution_slider"),
-            key="cpm_resolution_slider", step=0.0005, format="%.4f",
+        # Der nuetzliche Wertebereich (~0.0005-0.6) ueberspannt gut 3 Groessenordnungen -
+        # ein linearer Regler wuerde jeden sinnvollen Standardwert an den aeussersten Rand
+        # quetschen (siehe CPM_RESOLUTION_SLIDER_FLOOR-Kommentar in ld_constants.py).
+        # Der Regler arbeitet deshalb logarithmisch; `cpm_resolution_slider` bleibt der
+        # tatsaechliche (lineare) Wert - fuer Presets, Permalink und die Berechnung selbst
+        # unveraendert -, `cpm_resolution_log_slider` ist nur die Regler-Position.
+        floor = C.CPM_RESOLUTION_SLIDER_FLOOR
+        log_min, log_max = math.log10(floor), math.log10(C.CPM_RESOLUTION_MAX)
+        current_resolution = st.session_state.get("cpm_resolution_slider", C.DEFAULT_CPM_RESOLUTION)
+        needs_resync = (
+            "cpm_resolution_log_slider" not in st.session_state
+            or st.session_state.get("cpm_resolution_log_synced_from") != current_resolution
+        )
+        if needs_resync:
+            # Der Regler-eigene Session-State-Eintrag verschwindet, sobald dieser Zweig auf
+            # einem Rerun uebersprungen wird (Qualitaetsfunktion kurzzeitig auf Modularitaet
+            # umgestellt) - ein reiner Wert-Vergleich allein haette das NICHT erkannt, wenn
+            # sich der lineare Wert in der Zwischenzeit nicht geaendert hat (echter Bug,
+            # gefunden beim Hin- und Herschalten: der Regler fiel dabei stillschweigend auf
+            # CPM_RESOLUTION_SLIDER_FLOOR zurueck statt den zuletzt gesetzten Wert zu behalten).
+            st.session_state["cpm_resolution_log_slider"] = math.log10(max(current_resolution, floor))
+        log_value = st.slider(
+            "Auflösungsparameter γ (CPM-Skala, logarithmisch)", log_min, log_max,
+            key="cpm_resolution_log_slider", step=0.02, format="10^%.2f",
             help="Wird direkt gegen Kantengewichte verglichen (hier 0-1, Gauß-Kernel), "
             "nicht gegen ein graphgrößen-abhängiges Nullmodell wie bei Modularität - "
-            "deshalb eine ganz andere Skala. ~0.0005-0.004 verhält sich meist wie "
+            "deshalb eine ganz andere Skala, die zudem 3 Größenordnungen überspannt "
+            "(logarithmischer Regler). ~0.0005-0.004 verhält sich meist wie "
             "Modularitäts-γ=1.0. Ab ~0.5 löst CPM sogar das Auflösungslimit-Szenario "
             "korrekt auf (siehe Preset).",
         )
+        resolution = 10 ** log_value
+        st.session_state["cpm_resolution_slider"] = resolution
+        st.session_state["cpm_resolution_log_synced_from"] = resolution
+        st.caption(f"→ γ = {resolution:.4f}")
     else:
         resolution = st.slider(
             "Auflösungsparameter γ", *bounds("resolution_slider"), key="resolution_slider", step=0.1,

@@ -29,3 +29,29 @@ def test_all_presets_load_without_exception(preset_name):
     buttons = {b.label: b for b in at.button}
     buttons[preset_name].click().run(timeout=120)
     assert not at.exception, [str(e) for e in at.exception]
+
+
+def test_cpm_resolution_survives_toggling_quality_function_away_and_back():
+    """Regressionstest fuer einen echten Bug: der logarithmische CPM-Auflösungsregler
+    verwaltet seine Regler-Position in einem eigenen Session-State-Schluessel
+    (`cpm_resolution_log_slider`), der verschwindet, sobald der CPM-Zweig auf einem
+    Rerun uebersprungen wird (Qualitätsfunktion kurzzeitig auf Modularität umgestellt).
+    Ohne explizite Pruefung auf FEHLEN dieses Schluessels (nicht nur auf geaenderten
+    linearen Wert) fiel der Regler beim Zurueckschalten stillschweigend auf
+    CPM_RESOLUTION_SLIDER_FLOOR zurueck statt den zuletzt gesetzten Wert (hier 0.5) zu
+    behalten - gefunden durch echtes Hin- und Herschalten im Browser, nicht durch
+    Unit-Tests der Algorithmus-Module allein."""
+    at = AppTest.from_file(APP_PATH)
+    at.session_state["quality_function_radio"] = "cpm"
+    at.session_state["cpm_resolution_slider"] = 0.5
+    at.run(timeout=120)
+    assert not at.exception, [str(e) for e in at.exception]
+    assert at.session_state["cpm_resolution_slider"] == pytest.approx(0.5)
+
+    at.radio(key="quality_function_radio").set_value("modularity").run(timeout=120)
+    at.radio(key="quality_function_radio").set_value("cpm").run(timeout=120)
+
+    assert not at.exception, [str(e) for e in at.exception]
+    assert at.session_state["cpm_resolution_slider"] == pytest.approx(0.5), (
+        "CPM resolution reset instead of being preserved across a quality-function toggle"
+    )

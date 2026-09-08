@@ -41,6 +41,14 @@ RESOLUTION_MIN, RESOLUTION_MAX = 0.3, 4.0
 # auf, was Modularitaet bei KEINEM gamma schafft (siehe Preset "Aufloesungslimit richtig
 # behoben (CPM)"). 1.0 zersplittert bereits fast alles in Singletons.
 CPM_RESOLUTION_MIN, CPM_RESOLUTION_MAX = 0.0, 1.0
+# Der nuetzliche Bereich (siehe oben) ueberspannt gut 3 Groessenordnungen (0.0005 bis
+# ~0.6) auf einer LINEAREN Skala von 0 bis 1 - jeder gut kalibrierte Standardwert fuer den
+# Normalfall landet dadurch zwangslaeufig innerhalb der ersten 0.5% des Reglers, egal wie
+# genau er bestimmt wird (0.001 sitzt bei 0.1%). app.py rendert den Regler deshalb
+# logarithmisch; CPM_RESOLUTION_SLIDER_FLOOR ist NUR die untere Grenze dieser Log-
+# Darstellung (log(0) ist undefiniert) - resolution=0.0 bleibt ueber Presets/Permalink
+# weiterhin ein gueltiger, erreichbarer Wert, nur nicht mehr per Regler direkt anwaehlbar.
+CPM_RESOLUTION_SLIDER_FLOOR = 0.0001
 
 SHAPES = ("blobs", "moons")
 SHAPE_LABELS = {"blobs": "Gruppen (Blobs)", "moons": "Halbmonde"}
