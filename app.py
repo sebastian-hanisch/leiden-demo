@@ -74,7 +74,7 @@ st.title("🕸️ Leiden-Algorithmus: automatische Depot-Gruppierung ohne Ziel-k
 st.markdown(
     """
 Wie viele Verteilzentren sollten aus einem Netz von Standorten entstehen? Jede bisherige
-Demo dieser Zeile musste diese Zahl irgendwo vorgeben - **der Leiden-Algorithmus
+k-Means-artige Demo dieser Zeile musste diese Zahl irgendwo vorgeben - **der Leiden-Algorithmus
 nicht**. Er optimiert direkt die **Modularität** eines Ähnlichkeitsgraphen (wie viel
 dichter sind die Kanten innerhalb einer Gruppe als in einem zufälligen Vergleichsgraphen
 mit denselben Gradsummen erwartet?) und findet die Gruppenanzahl dabei automatisch -
@@ -512,6 +512,6 @@ st.markdown("---")
 
 st.caption(
     "Diese Demo ist Teil des Portfolios von [Sebastian Hanisch](https://sebastianhanisch.net) – "
-    "Operations Research und Machine Learning. Interesse an einer maßgeschneiderten Lösung für "
-    "Ihr Unternehmen? [Kontakt aufnehmen](https://sebastianhanisch.net/kontakt.html)"
+    "Operations Research und Machine Learning ([Über mich](https://sebastianhanisch.net/ueber-mich.html)). "
+    "Mehr zur Reihe: [Clustering erklärt: k-Means bis HDBSCAN](https://sebastianhanisch.net/konzepte-clustering.html)."
 )
