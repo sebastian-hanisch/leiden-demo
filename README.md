@@ -70,7 +70,8 @@ Die Presets legen mehrere Achsen offen:
   vollständig.
 - **Kombinierter Härtefall (Dichte + Brücke)**: dieselben Konstruktionsparameter wie
   hdbscan-demo (`density_imbalance`, `bridge_strength`) - Leiden übersteht beide
-  Härtefälle deutlich besser als DBSCAN/Single-Linkage (Rand-Index meist >0.95), neigt
+  Härtefälle deutlich besser als DBSCAN/Single-Linkage (Rand-Index im Preset 0.99; über 30
+  Instanz-Seeds im Mittel ≈0.95, Minimum ≈0.89), neigt
   aber zu leichtem Überclustern statt echtem Falsch-Verschmelzen.
 - **Auflösungslimit richtig behoben (CPM)**: identisches Szenario wie "Auflösungsgrenze",
   aber mit CPM statt Modularität - findet die wahren 20 Gruppen fast exakt.

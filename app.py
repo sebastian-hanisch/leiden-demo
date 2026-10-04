@@ -128,7 +128,7 @@ PRESET_HELP = {
     "Kein k nötig - viele Gruppen": "Deutlich höhere wahre Gruppenzahl, weiterhin klar getrennt - 'kein k nötig' bleibt robust.",
     "Auflösungsgrenze": "Viele kleine, eng gepackte Gruppen - Standard-Modularität (γ=1) verschmilzt einige davon trotz klarer Trennung.",
     "Auflösungsparameter als Kompromiss": "Dieselbe Szenerie mit höherem γ - hilft, behebt das Auflösungslimit aber nicht vollständig.",
-    "Kombinierter Härtefall (Dichte + Brücke)": "Dieselben zwei Härtefälle, an denen DBSCAN bzw. Single-Linkage-Chaining scheitern - Leiden übersteht beide deutlich besser (Rand-Index meist >0.95), ist aber nicht perfekt immun: die Brückenpunkte selbst bilden gelegentlich eine eigene kleine Community, statt zwei echte Gruppen fälschlich zu verschmelzen.",
+    "Kombinierter Härtefall (Dichte + Brücke)": "Dieselben zwei Härtefälle, an denen DBSCAN bzw. Single-Linkage-Chaining scheitern - Leiden übersteht beide deutlich besser (Rand-Index im Preset 0.99; über 30 Instanz-Seeds im Mittel ≈0.95, Minimum ≈0.89), ist aber nicht perfekt immun: die Brückenpunkte selbst bilden gelegentlich eine eigene kleine Community, statt zwei echte Gruppen fälschlich zu verschmelzen.",
     "Auflösungslimit richtig behoben (CPM)": "Exakt dasselbe Szenario wie 'Auflösungsgrenze', aber mit CPM statt Modularität als Qualitätsfunktion - findet die wahren 20 Gruppen fast exakt, was Modularität bei KEINEM Auflösungsparameter γ schafft.",
     "Ergebnis hängt vom Zufall ab (Konsensus hilft)": "Stärker überlappende Gruppen - einzelne Läufe landen je nach Zufalls-Seed in leicht unterschiedlichen lokalen Optima. Konsensus-Clustering (weiter unten) liefert eine deterministische, meist bessere Antwort.",
 }
@@ -466,9 +466,10 @@ Knotenanzahl ist. Der entscheidende Unterschied zu Modularität: $\gamma$ wird d
 gegen Kantengewichte verglichen, **ohne** dass $m$ oder die Graphgröße irgendwo
 auftaucht - eine kleine, aber dichte Community lohnt sich bei CPM unabhängig davon, wie
 groß der Rest des Graphen ist. Traag et al. (2011) beweisen formal, dass CPM dadurch
-**keine** Aufl.-limit-Pathologie besitzt (Theorem 3 im Paper): für jede Partition, in der
-zwei tatsächlich dicht verbundene Communities getrennt bleiben sollten, existiert ein
-$\gamma$, das genau das liefert - unabhängig von der Gesamtgraphgröße. Das
+**keine** Aufl.-limit-Pathologie besitzt (Theorem 3 im Paper, für Zielfunktionen mit
+lokalen Gewichten wie CPM): eine optimale Partition bleibt auf jedem induzierten Teilgraphen
+optimal - unabhängig von der Gesamtgraphgröße, die Teilstruktur hängt also nicht vom Rest
+des Graphen ab. Das
 Auflösungsgrenze-Preset dieser Demo zeigt das konkret: CPM mit $\gamma=0.5$ findet die
 wahren 20 Gruppen fast exakt (Rand-Index ≈0.98), was Modularität bei KEINEM getesteten
 $\gamma \in [0.3, 4.0]$ schafft.
